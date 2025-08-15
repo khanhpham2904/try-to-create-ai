@@ -8,10 +8,10 @@ const getBaseUrl = () => {
   if (__DEV__) {
     if (Platform.OS === 'android') {
       // Android device or emulator - use LAN IP so physical devices can connect
-      return 'http://192.168.1.10:8000';
+      return 'https://chat-app-aqhyf8fhaefzgvha.eastasia-01.azurewebsites.net';
     } else if (Platform.OS === 'web') {
       // Web browser
-      return 'http://localhost:8000';
+      return 'https://chat-app-aqhyf8fhaefzgvha.eastasia-01.azurewebsites.net';
     } else {
       // iOS or other
       return 'http://localhost:8000';
@@ -61,4 +61,5 @@ export const ERROR_MESSAGES = {
   NETWORK_ERROR: 'Network error. Please check your connection.',
   TIMEOUT_ERROR: 'Request timed out. Please check your connection.',
   OFFLINE_MODE: 'Running in offline mode. Some features may be limited.',
+
 } as const; 

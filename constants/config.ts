@@ -9,13 +9,13 @@ const getBaseUrl = () => {
     if (Platform.OS === 'android') {
       // Android device or emulator - use LAN IP so physical devices can connect
       // Make sure to use http:// prefix
-      return 'http://localhost:8000';
+      return 'https://chat-app-aqhyf8fhaefzgvha.eastasia-01.azurewebsites.net';
     } else if (Platform.OS === 'web') {
       // Web browser
-      return 'http://localhost:8000';
+      return 'https://chat-app-aqhyf8fhaefzgvha.eastasia-01.azurewebsites.net';
     } else {
       // iOS or other
-      return 'http://localhost:8000';
+      return 'https://chat-app-aqhyf8fhaefzgvha.eastasia-01.azurewebsites.net';
     }
   } else {
     // Production mode - use your production server URL
@@ -29,11 +29,11 @@ export const FALLBACK_URLS = Platform.OS === 'android'
       'http://192.168.1.10:8000', // LAN IP for Android devices
       'http://192.168.1.11:8000', // Alternative LAN IP
       'http://10.0.2.2:8000',     // Android emulator loopback to host
-      'http://localhost:8000',    // Localhost (for web/iOS dev)
+      'https://chat-app-aqhyf8fhaefzgvha.eastasia-01.azurewebsites.net',    // Localhost (for web/iOS dev)
       'http://127.0.0.1:8000',    // Alternative localhost
     ]
   : [
-      'http://localhost:8000',
+      'https://chat-app-aqhyf8fhaefzgvha.eastasia-01.azurewebsites.net',
       'http://127.0.0.1:8000',
     ];
 

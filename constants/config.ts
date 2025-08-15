@@ -14,11 +14,11 @@ const getBaseUrl = () => {
       return 'https://chat-app-aqhyf8fhaefzgvha.eastasia-01.azurewebsites.net';
     } else {
       // iOS or other
-      return 'http://localhost:8000';
+      return 'https://chat-app-aqhyf8fhaefzgvha.eastasia-01.azurewebsites.net';
     }
   } else {
     // Production mode - use your production server URL
-    return 'https://your-production-server.com';
+    return 'https://chat-app-aqhyf8fhaefzgvha.eastasia-01.azurewebsites.net';
   }
 };
 
@@ -63,3 +63,4 @@ export const ERROR_MESSAGES = {
   OFFLINE_MODE: 'Running in offline mode. Some features may be limited.',
 
 } as const; 
+

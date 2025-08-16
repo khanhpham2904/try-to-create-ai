@@ -4,21 +4,22 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
+  TouchableNativeFeedback,
   ScrollView,
   SafeAreaView,
   StatusBar,
   Alert,
   Platform,
-  Linking,
-  NativeSyntheticEvent,
-  NativeScrollEvent,
+  FlatList,
+  Dimensions,
 } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { useAuth } from '../components/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
-import { apiService } from '../services/api';
-import { API_CONFIG } from '../constants/config';
+import { useAgent } from '../components/AgentContext';
+import { apiService, ChatMessageWithAgent, Agent } from '../services/api';
 import { LanguageSelector } from '../components/LanguageSelector';
+import AgentSelector from '../components/AgentSelector';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
 interface HomeScreenProps {
@@ -29,16 +30,16 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   const { theme } = useTheme();
   const { user, logout, clearCache } = useAuth();
   const { t, language } = useLanguage();
-  const [stats, setStats] = useState({
-    totalMessages: 0,
-    firstMessageDate: null as string | null,
-    lastMessageDate: null as string | null,
-  });
+  const { selectedAgent, setSelectedAgent } = useAgent();
+  const [chatHistory, setChatHistory] = useState<ChatMessageWithAgent[]>([]);
+  const [availableAgents, setAvailableAgents] = useState<Agent[]>([]);
+  const [allAgents, setAllAgents] = useState<Agent[]>([]);
   const [apiHealthy, setApiHealthy] = useState<null | boolean>(null);
   const [isPinging, setIsPinging] = useState(false);
   const scrollRef = useRef<ScrollView | null>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [showLanguageSelector, setShowLanguageSelector] = useState(false);
+  const [showAgentSelector, setShowAgentSelector] = useState(false);
 
   const displayName = (user as any)?.full_name || (user as any)?.name || (user as any)?.email || 'User';
 
@@ -52,7 +53,9 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
 
   useEffect(() => {
     if (user) {
-      loadStats();
+      loadChatHistory();
+      loadAvailableAgents();
+      loadAllAgents();
     }
   }, [user]);
 
@@ -61,20 +64,44 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     pingApi(false);
   }, []);
 
-  const loadStats = async () => {
+
+
+  const loadChatHistory = async () => {
     if (!user) return;
 
     try {
-      const response = await apiService.getChatStatistics(Number((user as any).id));
-      if (response.data) {
-        setStats({
-          totalMessages: response.data.total_messages,
-          firstMessageDate: response.data.first_message_date,
-          lastMessageDate: response.data.last_message_date,
-        });
+      const response = await apiService.getUserMessages(Number((user as any).id), 0, 20);
+      if (response.data?.messages) {
+        setChatHistory(response.data.messages as ChatMessageWithAgent[]);
       }
     } catch (error) {
-      console.error('Error loading stats:', error);
+      console.error('Error loading chat history:', error);
+    }
+  };
+
+  const loadAvailableAgents = async () => {
+    if (!user) return;
+
+    try {
+      const response = await apiService.getUnchattedAgents(Number((user as any).id));
+      if (response.data) {
+        setAvailableAgents(response.data);
+      }
+    } catch (error) {
+      console.error('Error loading agents:', error);
+    }
+  };
+
+  const loadAllAgents = async () => {
+    if (!user) return;
+
+    try {
+      const response = await apiService.getAgents(Number((user as any).id));
+      if (response.data) {
+        setAllAgents(response.data);
+      }
+    } catch (error) {
+      console.error('Error loading all agents:', error);
     }
   };
 
@@ -99,6 +126,10 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   const formatDate = (dateString: string | null) => {
     if (!dateString) return language === 'vi' ? 'Chưa có' : 'Never';
     return new Date(dateString).toLocaleDateString();
+  };
+
+  const formatTime = (dateString: string) => {
+    return new Date(dateString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
   const pingApi = async (showToast: boolean = true) => {
@@ -127,30 +158,101 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     }
   };
 
-  const openDocs = () => {
-    const url = `${API_CONFIG.BASE_URL}/docs`;
-    Linking.openURL(url).catch(() => Alert.alert(
-      language === 'vi' ? 'Lỗi' : 'Error', 
-      language === 'vi' ? 'Không thể mở tài liệu' : 'Cannot open docs'
-    ));
-  };
-
-  const listAgents = async () => {
-    const res = await apiService.getAgents(Number((user as any).id));
-    if (res.data) {
-      Alert.alert(
-        language === 'vi' ? 'Agents' : 'Agents', 
-        language === 'vi' 
-          ? `Đã tải ${res.data.length} agents` 
-          : `Loaded ${res.data.length} agents`
-      );
-    } else {
-      Alert.alert(
-        language === 'vi' ? 'Agents' : 'Agents', 
-        res.error || (language === 'vi' ? 'Không thể tải agents' : 'Failed to load agents')
-      );
+  const handleAgentSelect = (agent: Agent | null) => {
+    setSelectedAgent(agent);
+    if (agent) {
+      // Navigate to chat tab with selected agent
+      navigation.navigate('Chat');
     }
   };
+
+  const getUnchattedAgents = () => {
+    // Get agent IDs that user has chatted with
+    const chattedAgentIds = new Set(
+      chatHistory
+        .filter(msg => msg.agent_id)
+        .map(msg => msg.agent_id)
+    );
+    
+    // Filter out agents that user has already chatted with
+    return availableAgents.filter(agent => !chattedAgentIds.has(agent.id));
+  };
+
+  const getAgentName = (agentId?: number) => {
+    if (!agentId) return language === 'vi' ? 'Không có Agent' : 'No Agent';
+    const agent = allAgents.find(a => a.id === agentId);
+    return agent ? agent.name : language === 'vi' ? 'Agent Không Xác Định' : 'Unknown Agent';
+  };
+
+  const getConversationsByAgent = () => {
+    const conversations: { [agentId: number]: ChatMessageWithAgent[] } = {};
+    
+    chatHistory.forEach(message => {
+      if (message.agent_id) {
+        if (!conversations[message.agent_id]) {
+          conversations[message.agent_id] = [];
+        }
+        conversations[message.agent_id].push(message);
+      }
+    });
+
+    // Convert to array and sort by latest message
+    return Object.entries(conversations)
+      .map(([agentId, messages]) => ({
+        agentId: parseInt(agentId),
+        messages: messages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+        latestMessage: messages[0] // Already sorted, so first is latest
+      }))
+      .sort((a, b) => new Date(b.latestMessage.created_at).getTime() - new Date(a.latestMessage.created_at).getTime());
+  };
+
+  const handleConversationPress = (agentId: number) => {
+    const agent = allAgents.find(a => a.id === agentId);
+    if (agent) {
+      setSelectedAgent(agent);
+      navigation.navigate('Chat');
+    }
+  };
+
+  const renderConversationItem = ({ item }: { item: { agentId: number; messages: ChatMessageWithAgent[]; latestMessage: ChatMessageWithAgent } }) => {
+    const TouchableComponent = Platform.OS === 'android' ? TouchableNativeFeedback : TouchableOpacity;
+    const touchableProps = Platform.OS === 'android' 
+      ? { background: TouchableNativeFeedback.Ripple(theme.colors.primary + '20', false) }
+      : { activeOpacity: 0.7 };
+
+    return (
+      <TouchableComponent 
+        {...touchableProps}
+        onPress={() => handleConversationPress(item.agentId)}
+      >
+        <View style={[styles.conversationItem, { backgroundColor: theme.colors.surface }]}>
+      <View style={styles.conversationHeader}>
+        <View style={styles.conversationAgentInfo}>
+          <View style={[styles.agentAvatar, { backgroundColor: theme.colors.primary + '20' }]}>
+            <Icon name="smart-toy" size={20} color={theme.colors.primary} />
+          </View>
+          <View style={styles.conversationTextContainer}>
+            <Text style={[styles.conversationAgentName, { color: theme.colors.text }]}>
+              {getAgentName(item.agentId)}
+            </Text>
+            <Text style={[styles.conversationMessage, { color: theme.colors.textSecondary }]} numberOfLines={1}>
+              {item.latestMessage.message}
+            </Text>
+          </View>
+        </View>
+                 <View style={styles.conversationMeta}>
+           <Text style={[styles.conversationTime, { color: theme.colors.textSecondary }]}>
+             {formatTime(item.latestMessage.created_at)}
+           </Text>
+           <Text style={[styles.conversationDate, { color: theme.colors.textSecondary }]}>
+             {formatDate(item.latestMessage.created_at)}
+           </Text>
+         </View>
+       </View>
+       </View>
+     </TouchableComponent>
+   );
+ };
 
   if (!(user as any)) {
     return (
@@ -197,15 +299,37 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               }
             </Text>
           </View>
-          <TouchableOpacity 
-            onPress={() => setShowLanguageSelector(true)} 
-            style={[styles.iconBtn, { backgroundColor: theme.colors.primary + '15' }]}
-          >
-            <Icon name="language" size={20} color={theme.colors.primary} />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={handleLogout} style={[styles.iconBtn, { backgroundColor: theme.colors.error + '15' }]}>
-            <Icon name="logout" size={20} color={theme.colors.error} />
-          </TouchableOpacity>
+          {Platform.OS === 'android' ? (
+            <TouchableNativeFeedback
+              background={TouchableNativeFeedback.Ripple(theme.colors.primary + '20', false)}
+              onPress={() => setShowLanguageSelector(true)}
+            >
+              <View style={[styles.iconBtn, { backgroundColor: theme.colors.primary + '15' }]}>
+                <Icon name="language" size={20} color={theme.colors.primary} />
+              </View>
+            </TouchableNativeFeedback>
+          ) : (
+            <TouchableOpacity 
+              onPress={() => setShowLanguageSelector(true)} 
+              style={[styles.iconBtn, { backgroundColor: theme.colors.primary + '15' }]}
+            >
+              <Icon name="language" size={20} color={theme.colors.primary} />
+            </TouchableOpacity>
+          )}
+          {Platform.OS === 'android' ? (
+            <TouchableNativeFeedback
+              background={TouchableNativeFeedback.Ripple(theme.colors.error + '20', false)}
+              onPress={handleLogout}
+            >
+              <View style={[styles.iconBtn, { backgroundColor: theme.colors.error + '15' }]}>
+                <Icon name="logout" size={20} color={theme.colors.error} />
+              </View>
+            </TouchableNativeFeedback>
+          ) : (
+            <TouchableOpacity onPress={handleLogout} style={[styles.iconBtn, { backgroundColor: theme.colors.error + '15' }]}>
+              <Icon name="logout" size={20} color={theme.colors.error} />
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
@@ -215,18 +339,6 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
             <Icon name="wifi" size={18} color={theme.colors.primary} />
             <Text style={[styles.webActionText, { color: theme.colors.primary }]}>
               {isPinging ? (language === 'vi' ? 'Đang ping...' : 'Pinging...') : (language === 'vi' ? 'Ping API' : 'Ping API')}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.webActionBtn, { backgroundColor: theme.colors.primary + '15', borderColor: theme.colors.primary + '40' }]} onPress={listAgents}>
-            <Icon name="smart-toy" size={18} color={theme.colors.primary} />
-            <Text style={[styles.webActionText, { color: theme.colors.primary }]}>
-              {language === 'vi' ? 'Danh Sách Agents' : 'List Agents'}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.webActionBtn, { backgroundColor: theme.colors.border }]} onPress={openDocs}>
-            <Icon name="description" size={18} color={theme.colors.text} />
-            <Text style={[styles.webActionText, { color: theme.colors.text }]}>
-              {language === 'vi' ? 'Mở Tài Liệu' : 'Open Docs'}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.webActionBtn, { backgroundColor: theme.colors.warning + '20', borderColor: theme.colors.warning + '40' }]} onPress={handleClearCache}>
@@ -246,7 +358,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}
         ref={scrollRef}
-        onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
+        onScroll={(e: any) => {
           if (Platform.OS === 'web') {
             const y = e.nativeEvent.contentOffset.y;
             if (!showScrollTop && y > 250) setShowScrollTop(true);
@@ -260,86 +372,99 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
           <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
             {language === 'vi' ? 'Hành Động Nhanh' : 'Quick Actions'}
           </Text>
-          <View style={styles.quickActions}>
-            <TouchableOpacity style={[styles.actionCard, { backgroundColor: theme.colors.surface }]} onPress={() => navigation.navigate('Chat')}>
-              <Icon name="chat" size={32} color={theme.colors.primary} />
-              <Text style={[styles.actionTitle, { color: theme.colors.text }]}>
-                {language === 'vi' ? 'Bắt Đầu Chat' : 'Start Chat'}
-              </Text>
-              <Text style={[styles.actionSubtitle, { color: theme.colors.textSecondary }]}>
-                {language === 'vi' ? 'Trò chuyện với trợ lý AI' : 'Talk to AI assistant'}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={[styles.actionCard, { backgroundColor: theme.colors.surface }]} onPress={() => navigation.navigate('Profile')}>
-              <Icon name="person" size={32} color={theme.colors.primary} />
-              <Text style={[styles.actionTitle, { color: theme.colors.text }]}>
-                {language === 'vi' ? 'Hồ Sơ' : 'Profile'}
-              </Text>
-              <Text style={[styles.actionSubtitle, { color: theme.colors.textSecondary }]}>
-                {language === 'vi' ? 'Quản lý tài khoản của bạn' : 'Manage your account'}
-              </Text>
-            </TouchableOpacity>
-          </View>
+                     <View style={styles.quickActions}>
+             {Platform.OS === 'android' ? (
+               <TouchableNativeFeedback
+                 background={TouchableNativeFeedback.Ripple(theme.colors.primary + '20', false)}
+                 onPress={() => setShowAgentSelector(true)}
+               >
+                 <View style={[styles.actionCard, { backgroundColor: theme.colors.surface }]}>
+                   <Icon name="smart-toy" size={32} color={theme.colors.primary} />
+                   <Text style={[styles.actionTitle, { color: theme.colors.text }]}>
+                     {language === 'vi' ? 'Tạo Agent' : 'Create Agent'}
+                   </Text>
+                   <Text style={[styles.actionSubtitle, { color: theme.colors.textSecondary }]}>
+                     {language === 'vi' ? 'Tạo hoặc chọn AI assistant' : 'Create or select AI assistant'}
+                   </Text>
+                 </View>
+               </TouchableNativeFeedback>
+             ) : (
+               <TouchableOpacity style={[styles.actionCard, { backgroundColor: theme.colors.surface }]} onPress={() => setShowAgentSelector(true)}>
+                 <Icon name="smart-toy" size={32} color={theme.colors.primary} />
+                 <Text style={[styles.actionTitle, { color: theme.colors.text }]}>
+                   {language === 'vi' ? 'Tạo Agent' : 'Create Agent'}
+                 </Text>
+                 <Text style={[styles.actionSubtitle, { color: theme.colors.textSecondary }]}>
+                   {language === 'vi' ? 'Tạo hoặc chọn AI assistant' : 'Create or select AI assistant'}
+                 </Text>
+               </TouchableOpacity>
+             )}
+           </View>
         </View>
 
-        {/* Statistics */}
+
+
+        {/* Chat History with Agents */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-            {language === 'vi' ? 'Thống Kê Của Bạn' : 'Your Statistics'}
+            {language === 'vi' ? 'Lịch Sử Chat với Agent' : 'Chat History with Agents'}
           </Text>
-          <View style={[styles.statsCard, { backgroundColor: theme.colors.surface }]}>            
-            <View style={styles.statItem}>
-              <Icon name="message" size={24} color={theme.colors.primary} />
-              <View style={styles.statContent}>
-                <Text style={[styles.statValue, { color: theme.colors.text }]}>{stats.totalMessages}</Text>
-                <Text style={[styles.statLabel, { color: theme.colors.textSecondary }]}>
-                  {language === 'vi' ? 'Tổng Tin Nhắn' : 'Total Messages'}
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.statItem}>
-              <Icon name="schedule" size={24} color={theme.colors.primary} />
-              <View style={styles.statContent}>
-                <Text style={[styles.statValue, { color: theme.colors.text }]}>{formatDate(stats.firstMessageDate)}</Text>
-                <Text style={[styles.statLabel, { color: theme.colors.textSecondary }]}>
-                  {language === 'vi' ? 'Tin Nhắn Đầu Tiên' : 'First Message'}
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.statItem}>
-              <Icon name="update" size={24} color={theme.colors.primary} />
-              <View style={styles.statContent}>
-                <Text style={[styles.statValue, { color: theme.colors.text }]}>{formatDate(stats.lastMessageDate)}</Text>
-                <Text style={[styles.statLabel, { color: theme.colors.textSecondary }]}>
-                  {language === 'vi' ? 'Tin Nhắn Cuối' : 'Last Message'}
-                </Text>
-              </View>
-            </View>
-          </View>
-        </View>
-
-        {/* Recent Activity */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-            {language === 'vi' ? 'Hoạt Động Gần Đây' : 'Recent Activity'}
-          </Text>
-          <View style={[styles.activityCard, { backgroundColor: theme.colors.surface }]}>            
-            <View style={styles.activityItem}>
-              <Icon name="chat-bubble" size={20} color={theme.colors.primary} />
-              <Text style={[styles.activityText, { color: theme.colors.text }]}>
-                {stats.totalMessages > 0 
-                  ? (language === 'vi' 
-                      ? `Bạn đã gửi ${stats.totalMessages} tin nhắn đến AI` 
-                      : `You've sent ${stats.totalMessages} messages to AI`)
-                  : (language === 'vi' 
-                      ? 'Chưa có tin nhắn nào. Hãy bắt đầu trò chuyện!' 
-                      : 'No messages yet. Start chatting!')
-                }
+          {getConversationsByAgent().length > 0 ? (
+            <FlatList
+              data={getConversationsByAgent()}
+              keyExtractor={(item) => String(item.agentId)}
+              renderItem={renderConversationItem}
+              scrollEnabled={false}
+              showsVerticalScrollIndicator={false}
+            />
+          ) : (
+            <View style={[styles.emptyStateCard, { backgroundColor: theme.colors.surface }]}>
+              <Icon name="chat-bubble-outline" size={48} color={theme.colors.textSecondary} />
+              <Text style={[styles.emptyStateText, { color: theme.colors.textSecondary }]}>
+                {language === 'vi' ? 'Chưa có lịch sử chat nào' : 'No chat history yet'}
+              </Text>
+              <Text style={[styles.emptyStateSubtext, { color: theme.colors.textSecondary }]}>
+                {language === 'vi' ? 'Bắt đầu trò chuyện để xem lịch sử ở đây' : 'Start chatting to see history here'}
               </Text>
             </View>
+          )}
+        </View>
+
+        {/* Available Agents */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
+            {language === 'vi' ? 'Agents Có Sẵn' : 'Available Agents'}
+          </Text>
+          <View style={[styles.agentsCard, { backgroundColor: theme.colors.surface }]}>
+            <Text style={[styles.agentsInfo, { color: theme.colors.textSecondary }]}>
+              {language === 'vi' 
+                ? `Bạn có ${getUnchattedAgents().length} agents chưa thử nghiệm` 
+                : `You have ${getUnchattedAgents().length} agents to try`
+              }
+            </Text>
+                         {Platform.OS === 'android' ? (
+               <TouchableNativeFeedback
+                 background={TouchableNativeFeedback.Ripple('rgba(255,255,255,0.3)', false)}
+                 onPress={() => setShowAgentSelector(true)}
+               >
+                 <View style={[styles.tryAgentsButton, { backgroundColor: theme.colors.primary }]}>
+                   <Icon name="smart-toy" size={20} color="white" />
+                   <Text style={[styles.tryAgentsButtonText, { color: 'white' }]}>
+                     {language === 'vi' ? 'Thử Nghiệm Agents' : 'Try Agents'}
+                   </Text>
+                 </View>
+               </TouchableNativeFeedback>
+             ) : (
+               <TouchableOpacity 
+                 style={[styles.tryAgentsButton, { backgroundColor: theme.colors.primary }]} 
+                 onPress={() => setShowAgentSelector(true)}
+               >
+                 <Icon name="smart-toy" size={20} color="white" />
+                 <Text style={[styles.tryAgentsButtonText, { color: 'white' }]}>
+                   {language === 'vi' ? 'Thử Nghiệm Agents' : 'Try Agents'}
+                 </Text>
+               </TouchableOpacity>
+             )}
           </View>
         </View>
       </ScrollView>
@@ -359,9 +484,20 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         visible={showLanguageSelector}
         onClose={() => setShowLanguageSelector(false)}
       />
+
+      {/* Agent Selector Modal */}
+      <AgentSelector
+        selectedAgent={selectedAgent}
+        onAgentSelect={handleAgentSelect}
+        visible={showAgentSelector}
+        onClose={() => setShowAgentSelector(false)}
+        userId={Number((user as any).id)}
+      />
     </SafeAreaView>
   );
 };
+
+const { width: screenWidth } = Dimensions.get('window');
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
@@ -371,55 +507,249 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight || 20 : 14,
-    paddingBottom: 14,
-    borderBottomWidth: 2,
-    elevation: Platform.OS === 'android' ? 2 : 0,
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + 16 : 14,
+    paddingBottom: 20,
+    borderBottomWidth: Platform.OS === 'android' ? 0 : 2,
+    elevation: Platform.OS === 'android' ? 4 : 0,
     shadowColor: Platform.OS === 'android' ? '#000' : undefined,
     shadowOffset: Platform.OS === 'android' ? { width: 0, height: 2 } : undefined,
-    shadowOpacity: Platform.OS === 'android' ? 0.1 : undefined,
-    shadowRadius: Platform.OS === 'android' ? 4 : undefined,
+    shadowOpacity: Platform.OS === 'android' ? 0.15 : undefined,
+    shadowRadius: Platform.OS === 'android' ? 8 : undefined,
   },
   headerLeftGroup: { flexDirection: 'row', alignItems: 'center' },
   headerRightGroup: { flexDirection: 'row', alignItems: 'center' },
-  avatar: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
-  avatarInitials: { fontSize: 16, fontWeight: '700' },
-  greeting: { fontSize: 12, opacity: 0.8 },
-  userName: { fontSize: 18, fontWeight: '700' },
-  iconBtn: { marginLeft: 8, padding: 8, borderRadius: 10 },
-  statusBadge: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
-  statusText: { fontSize: 12, marginLeft: 4 },
+  avatar: { 
+    width: Platform.OS === 'android' ? 48 : 40, 
+    height: Platform.OS === 'android' ? 48 : 40, 
+    borderRadius: Platform.OS === 'android' ? 24 : 20, 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    marginRight: 16 
+  },
+  avatarInitials: { 
+    fontSize: Platform.OS === 'android' ? 18 : 16, 
+    fontWeight: '700' 
+  },
+  greeting: { 
+    fontSize: Platform.OS === 'android' ? 14 : 12, 
+    opacity: 0.8,
+    marginBottom: 2
+  },
+  userName: { 
+    fontSize: Platform.OS === 'android' ? 20 : 18, 
+    fontWeight: '700' 
+  },
+  iconBtn: { 
+    marginLeft: 12, 
+    padding: Platform.OS === 'android' ? 12 : 8, 
+    borderRadius: Platform.OS === 'android' ? 24 : 10,
+    minWidth: Platform.OS === 'android' ? 48 : 36,
+    minHeight: Platform.OS === 'android' ? 48 : 36,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  statusBadge: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    borderWidth: Platform.OS === 'android' ? 0 : 1, 
+    paddingHorizontal: 12, 
+    paddingVertical: Platform.OS === 'android' ? 8 : 4, 
+    borderRadius: Platform.OS === 'android' ? 20 : 12,
+    elevation: Platform.OS === 'android' ? 2 : 0,
+    shadowColor: Platform.OS === 'android' ? '#000' : undefined,
+    shadowOffset: Platform.OS === 'android' ? { width: 0, height: 1 } : undefined,
+    shadowOpacity: Platform.OS === 'android' ? 0.1 : undefined,
+    shadowRadius: Platform.OS === 'android' ? 2 : undefined,
+  },
+  statusText: { 
+    fontSize: Platform.OS === 'android' ? 13 : 12, 
+    marginLeft: 6,
+    fontWeight: Platform.OS === 'android' ? '500' : '400'
+  },
 
   webActionsBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1 },
   webActionBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, marginRight: 8, borderWidth: 1 },
   webActionText: { marginLeft: 6, fontSize: 14, fontWeight: '600' },
 
-  content: { flex: 1, paddingHorizontal: 16 },
-  section: { marginVertical: 20 },
-  sectionTitle: { fontSize: 20, fontWeight: 'bold', marginBottom: 16 },
-  quickActions: { flexDirection: 'row', justifyContent: 'space-between' },
-  actionCard: { flex: 1, padding: 20, borderRadius: 12, alignItems: 'center', marginHorizontal: 4, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
-  actionTitle: { fontSize: 16, fontWeight: 'bold', marginTop: 12, textAlign: 'center' },
-  actionSubtitle: { fontSize: 12, marginTop: 4, textAlign: 'center' },
-  statsCard: { padding: 20, borderRadius: 12, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
-  statItem: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
-  statContent: { marginLeft: 12, flex: 1 },
-  statValue: { fontSize: 18, fontWeight: 'bold' },
-  statLabel: { fontSize: 14, marginTop: 2 },
-  activityCard: { padding: 16, borderRadius: 12, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
-  activityItem: { flexDirection: 'row', alignItems: 'center' },
-  activityText: { fontSize: 14, marginLeft: 12, flex: 1 },
-  errorText: { fontSize: 16, textAlign: 'center' },
-  scrollTopBtn: {
-    position: Platform.OS === 'web' ? 'fixed' as any : 'absolute',
-    right: 24,
-    bottom: 24,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+  content: { 
+    flex: 1, 
+    paddingHorizontal: Platform.OS === 'android' ? 20 : 16 
+  },
+  section: { 
+    marginVertical: Platform.OS === 'android' ? 24 : 20 
+  },
+  sectionTitle: { 
+    fontSize: Platform.OS === 'android' ? 22 : 20, 
+    fontWeight: 'bold', 
+    marginBottom: Platform.OS === 'android' ? 20 : 16,
+    letterSpacing: Platform.OS === 'android' ? 0.5 : 0
+  },
+  quickActions: { 
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  actionCard: { 
+    width: '100%', 
+    maxWidth: Platform.OS === 'android' ? screenWidth - 80 : 300, 
+    padding: Platform.OS === 'android' ? 24 : 20, 
+    borderRadius: Platform.OS === 'android' ? 16 : 12, 
+    alignItems: 'center', 
+    elevation: Platform.OS === 'android' ? 6 : 2, 
+    shadowColor: '#000', 
+    shadowOffset: { width: 0, height: Platform.OS === 'android' ? 4 : 2 }, 
+    shadowOpacity: Platform.OS === 'android' ? 0.15 : 0.1, 
+    shadowRadius: Platform.OS === 'android' ? 8 : 4,
+    minHeight: Platform.OS === 'android' ? 120 : 100
+  },
+  actionTitle: { 
+    fontSize: Platform.OS === 'android' ? 18 : 16, 
+    fontWeight: 'bold', 
+    marginTop: Platform.OS === 'android' ? 16 : 12, 
+    textAlign: 'center',
+    letterSpacing: Platform.OS === 'android' ? 0.3 : 0
+  },
+  actionSubtitle: { 
+    fontSize: Platform.OS === 'android' ? 14 : 12, 
+    marginTop: Platform.OS === 'android' ? 8 : 4, 
+    textAlign: 'center',
+    lineHeight: Platform.OS === 'android' ? 20 : 16
+  },
+  
+  conversationItem: {
+    padding: Platform.OS === 'android' ? 20 : 16,
+    borderRadius: Platform.OS === 'android' ? 16 : 12,
+    marginBottom: Platform.OS === 'android' ? 16 : 12,
+    elevation: Platform.OS === 'android' ? 4 : 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: Platform.OS === 'android' ? 3 : 2 },
+    shadowOpacity: Platform.OS === 'android' ? 0.12 : 0.1,
+    shadowRadius: Platform.OS === 'android' ? 6 : 4,
+  },
+  conversationHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  conversationAgentInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: Platform.OS === 'android' ? 16 : 12,
+  },
+  agentAvatar: {
+    width: Platform.OS === 'android' ? 48 : 40,
+    height: Platform.OS === 'android' ? 48 : 40,
+    borderRadius: Platform.OS === 'android' ? 24 : 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: Platform.OS === 'android' ? 16 : 12,
+  },
+  conversationTextContainer: {
+    flex: 1,
+  },
+  conversationAgentName: {
+    fontSize: Platform.OS === 'android' ? 18 : 16,
+    fontWeight: '600',
+    marginBottom: Platform.OS === 'android' ? 6 : 4,
+    letterSpacing: Platform.OS === 'android' ? 0.2 : 0,
+  },
+  conversationMessage: {
+    fontSize: Platform.OS === 'android' ? 15 : 14,
+    lineHeight: Platform.OS === 'android' ? 22 : 18,
+  },
+  conversationMeta: {
+    alignItems: 'flex-end',
+  },
+  conversationTime: {
+    fontSize: Platform.OS === 'android' ? 13 : 12,
+    marginBottom: Platform.OS === 'android' ? 4 : 2,
+    fontWeight: Platform.OS === 'android' ? '500' : '400',
+  },
+  conversationDate: {
+    fontSize: Platform.OS === 'android' ? 12 : 11,
+    fontWeight: Platform.OS === 'android' ? '400' : '300',
+  },
+  
+  emptyStateCard: {
+    padding: Platform.OS === 'android' ? 48 : 40,
+    borderRadius: Platform.OS === 'android' ? 16 : 12,
+    alignItems: 'center',
+    elevation: Platform.OS === 'android' ? 4 : 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: Platform.OS === 'android' ? 3 : 2 },
+    shadowOpacity: Platform.OS === 'android' ? 0.12 : 0.1,
+    shadowRadius: Platform.OS === 'android' ? 6 : 4,
+  },
+  emptyStateText: {
+    fontSize: Platform.OS === 'android' ? 20 : 18,
+    fontWeight: '600',
+    marginTop: Platform.OS === 'android' ? 20 : 16,
+    textAlign: 'center',
+    letterSpacing: Platform.OS === 'android' ? 0.3 : 0,
+  },
+  emptyStateSubtext: {
+    fontSize: Platform.OS === 'android' ? 16 : 14,
+    marginTop: Platform.OS === 'android' ? 12 : 8,
+    textAlign: 'center',
+    lineHeight: Platform.OS === 'android' ? 24 : 20,
+  },
+  
+  agentsCard: {
+    padding: Platform.OS === 'android' ? 24 : 20,
+    borderRadius: Platform.OS === 'android' ? 16 : 12,
+    elevation: Platform.OS === 'android' ? 4 : 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: Platform.OS === 'android' ? 3 : 2 },
+    shadowOpacity: Platform.OS === 'android' ? 0.12 : 0.1,
+    shadowRadius: Platform.OS === 'android' ? 6 : 4,
+  },
+  agentsInfo: {
+    fontSize: Platform.OS === 'android' ? 18 : 16,
+    marginBottom: Platform.OS === 'android' ? 20 : 16,
+    textAlign: 'center',
+    lineHeight: Platform.OS === 'android' ? 26 : 22,
+  },
+  tryAgentsButton: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: Platform.OS === 'android' ? 16 : 12,
+    paddingHorizontal: Platform.OS === 'android' ? 32 : 24,
+    borderRadius: Platform.OS === 'android' ? 12 : 8,
+    elevation: Platform.OS === 'android' ? 4 : 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: Platform.OS === 'android' ? 3 : 2 },
+    shadowOpacity: Platform.OS === 'android' ? 0.15 : 0.1,
+    shadowRadius: Platform.OS === 'android' ? 6 : 4,
+    minHeight: Platform.OS === 'android' ? 56 : 48,
+  },
+  tryAgentsButtonText: {
+    fontSize: Platform.OS === 'android' ? 18 : 16,
+    fontWeight: '600',
+    marginLeft: Platform.OS === 'android' ? 12 : 8,
+    letterSpacing: Platform.OS === 'android' ? 0.3 : 0,
+  },
+  
+  errorText: { 
+    fontSize: Platform.OS === 'android' ? 18 : 16, 
+    textAlign: 'center',
+    lineHeight: Platform.OS === 'android' ? 26 : 22,
+  },
+  scrollTopBtn: {
+    position: Platform.OS === 'web' ? 'fixed' as any : 'absolute',
+    right: Platform.OS === 'android' ? 20 : 24,
+    bottom: Platform.OS === 'android' ? 20 : 24,
+    width: Platform.OS === 'android' ? 56 : 44,
+    height: Platform.OS === 'android' ? 56 : 44,
+    borderRadius: Platform.OS === 'android' ? 28 : 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: Platform.OS === 'android' ? 8 : 0,
+    shadowColor: Platform.OS === 'android' ? '#000' : undefined,
+    shadowOffset: Platform.OS === 'android' ? { width: 0, height: 4 } : undefined,
+    shadowOpacity: Platform.OS === 'android' ? 0.3 : undefined,
+    shadowRadius: Platform.OS === 'android' ? 8 : undefined,
     ...(Platform.OS === 'web' && {
       boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
       cursor: 'pointer',

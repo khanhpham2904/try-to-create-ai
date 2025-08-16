@@ -18,6 +18,7 @@ import {
 import { useTheme } from '../theme/ThemeContext';
 import { useAuth } from '../components/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
+import { useAgent } from '../components/AgentContext';
 import { apiService, ChatMessage, Agent } from '../services/api';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import AgentCustomizer from '../components/AgentCustomizer';
@@ -34,17 +35,19 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
   const { theme } = useTheme();
   const { user } = useAuth();
   const { language } = useLanguage();
+  const { selectedAgent, setSelectedAgent } = useAgent();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
   const [showAgentSelector, setShowAgentSelector] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (user) {
+      // Clear messages immediately when agent changes to avoid showing wrong messages
+      setMessages([]);
       loadMessages();
       // Fade in animation
       Animated.timing(fadeAnim, {
@@ -53,7 +56,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
         useNativeDriver: true,
       }).start();
     }
-  }, [user]);
+  }, [user, selectedAgent]);
 
   // Reload messages when screen comes into focus (when rejoining app)
   useFocusEffect(
@@ -70,20 +73,30 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     
     setIsLoading(true);
     try {
-      console.log('📜 Loading messages for user:', user.id);
-      const response = await apiService.getUserMessages(Number(user.id), 0, 100);
+      console.log('📜 Loading messages for user:', user.id, 'with agent:', selectedAgent?.id);
+      
+      // Add a small delay to show loading state when switching agents
+      if (selectedAgent) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+      
+      const response = await apiService.getUserMessages(Number(user.id), 0, 100, selectedAgent?.id);
       console.log('📜 Messages response:', response);
       
       if (response.data && response.data.messages) {
         console.log('📜 Found', response.data.messages.length, 'messages');
         // Process messages to ensure proper format
-        const processedMessages = response.data.messages.map((msg: any) => ({
+        let processedMessages = response.data.messages.map((msg: any) => ({
           id: msg.id,
           message: msg.message || '',
           response: msg.response || '',
           user_id: msg.user_id,
+          agent_id: msg.agent_id,
           created_at: msg.created_at,
         }));
+        
+        // Backend already filters by agent, so no need to filter again
+        console.log('📜 Using', processedMessages.length, 'messages for agent:', selectedAgent?.name || 'all agents');
         
         // Sort messages chronologically (oldest first, newest last)
         const sortedMessages = processedMessages.sort((a, b) => {
@@ -94,6 +107,11 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
         
         console.log('📜 Processed and sorted messages:', sortedMessages);
         setMessages(sortedMessages);
+        
+        // Scroll to top when switching agents to show the new conversation
+        setTimeout(() => {
+          flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+        }, 100);
       } else {
         console.log('📜 No messages found or invalid response format');
         setMessages([]);
@@ -130,6 +148,16 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     // Add user message immediately for real-time experience
     setMessages(prev => [...prev, userMessage]);
     
+    // Add a temporary "AI is typing" message
+    const typingMessage: ChatMessage = {
+      id: Date.now() + 1, // Temporary ID
+      message: '',
+      response: language === 'vi' ? '🤖 AI đang trả lời...' : '🤖 AI is typing...',
+      user_id: Number(user.id),
+      created_at: new Date().toISOString(),
+    };
+    setMessages(prev => [...prev, typingMessage]);
+    
     // Scroll to bottom to show the new message
     setTimeout(() => {
       flatListRef.current?.scrollToEnd({ animated: true });
@@ -156,13 +184,20 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
           created_at: response.data.created_at,
         };
 
-        // Add AI message to the chat (don't replace user message)
-        setMessages(prev => [...prev, aiMessage]);
+        // Replace the typing message with the actual AI response
+        setMessages(prev => {
+          const filteredMessages = prev.filter(msg => msg.id !== Date.now() + 1); // Remove typing message
+          return [...filteredMessages, aiMessage];
+        });
         
-        // Scroll to the bottom to show the AI response
+        // Scroll to the bottom to show the AI response with a longer delay for longer responses
+        const scrollDelay = response.data.response.length > 1000 ? 300 : 100;
         setTimeout(() => {
           flatListRef.current?.scrollToEnd({ animated: true });
-        }, 100);
+        }, scrollDelay);
+        
+        // Log response length for debugging
+        console.log(`💬 AI Response length: ${response.data.response.length} characters`);
       }
     } catch (error) {
       console.error('Error sending message:', error);
@@ -170,8 +205,8 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
         language === 'vi' ? 'Lỗi' : 'Error', 
         language === 'vi' ? 'Không thể gửi tin nhắn' : 'Failed to send message'
       );
-      // Remove the temporary message on error
-      setMessages(prev => prev.filter(msg => msg.id !== userMessage.id));
+      // Remove the temporary messages on error
+      setMessages(prev => prev.filter(msg => msg.id !== userMessage.id && msg.id !== Date.now() + 1));
       setInputMessage(messageText);
     } finally {
       setIsSending(false);
@@ -367,7 +402,10 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
               {selectedAgent ? selectedAgent.name : (language === 'vi' ? 'Trợ Lý AI' : 'AI Assistant')}
             </Text>
             <Text style={[styles.headerSubtitle, { color: theme.colors.textSecondary }]}>
-              {selectedAgent ? selectedAgent.personality : (language === 'vi' ? 'Chọn một trợ lý để bắt đầu' : 'Choose an assistant to get started')}
+              {selectedAgent 
+                ? `${selectedAgent.personality} • ${language === 'vi' ? 'Cuộc trò chuyện riêng' : 'Private chat'}`
+                : (language === 'vi' ? 'Chọn một trợ lý để bắt đầu' : 'Choose an assistant to get started')
+              }
             </Text>
           </View>
         </View>
@@ -421,8 +459,8 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
       <Text style={[styles.emptySubtitle, { color: theme.colors.textSecondary }]}>
         {selectedAgent 
           ? (language === 'vi' 
-              ? `Trò chuyện với ${selectedAgent.name} để bắt đầu`
-              : `Chat with ${selectedAgent.name} to get started`)
+              ? `Bắt đầu cuộc trò chuyện riêng với ${selectedAgent.name}`
+              : `Start a private conversation with ${selectedAgent.name}`)
           : (language === 'vi' 
               ? 'Chọn một trợ lý AI để bắt đầu trò chuyện'
               : 'Choose an AI assistant to begin chatting')

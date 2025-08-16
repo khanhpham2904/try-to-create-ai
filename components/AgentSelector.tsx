@@ -15,7 +15,8 @@ import {
   SafeAreaView,
 } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
-import { Agent, apiService } from '../services/api';
+import { useAgent } from './AgentContext';
+import { Agent, apiService, ChatMessageWithAgent } from '../services/api';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import AgentCustomizer from './AgentCustomizer';
 
@@ -80,7 +81,9 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
   userId,
 }) => {
   const { theme } = useTheme();
+  const { selectedAgent: contextSelectedAgent, setSelectedAgent: setContextSelectedAgent } = useAgent();
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [chatHistory, setChatHistory] = useState<ChatMessageWithAgent[]>([]);
   const [loading, setLoading] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -90,6 +93,7 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
   useEffect(() => {
     if (visible) {
       loadAgents();
+      loadChatHistory();
     }
   }, [visible]);
 
@@ -97,7 +101,7 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
     setLoading(true);
     setIsOffline(false);
     try {
-      const response = await apiService.getAgents(userId);
+      const response = await apiService.getUnchattedAgents(userId);
       if (response.status === 200 && Array.isArray(response.data) && response.data.length > 0) {
         setAgents(response.data);
       } else {
@@ -112,14 +116,28 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
     }
   };
 
+  const loadChatHistory = async () => {
+    if (!userId) return;
+
+    try {
+      const response = await apiService.getUserMessages(userId, 0, 100);
+      if (response.data?.messages) {
+        setChatHistory(response.data.messages as ChatMessageWithAgent[]);
+      }
+    } catch (error) {
+      console.error('Error loading chat history:', error);
+    }
+  };
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadAgents();
+    await Promise.all([loadAgents(), loadChatHistory()]);
     setRefreshing(false);
   }, []);
 
   const handleAgentSelect = (agent: Agent) => {
     onAgentSelect(agent);
+    setContextSelectedAgent(agent);
     onClose();
   };
 
@@ -141,6 +159,7 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
   const handleAgentCreated = (newAgent: Agent) => {
     setAgents(prev => [...prev, newAgent]);
     onAgentSelect(newAgent);
+    setContextSelectedAgent(newAgent);
   };
 
   const handleAgentUpdated = (updatedAgent: Agent) => {
@@ -149,7 +168,20 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
     ));
     if (selectedAgent?.id === updatedAgent.id) {
       onAgentSelect(updatedAgent);
+      setContextSelectedAgent(updatedAgent);
     }
+  };
+
+  const getUnchattedAgents = () => {
+    // Get agent IDs that user has chatted with
+    const chattedAgentIds = new Set(
+      chatHistory
+        .filter(msg => msg.agent_id)
+        .map(msg => msg.agent_id)
+    );
+    
+    // Filter out agents that user has already chatted with
+    return agents.filter(agent => !chattedAgentIds.has(agent.id));
   };
 
   const getAgentIcon = (agentName: string) => {
@@ -487,6 +519,28 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
       shadowOpacity: 0.2,
       shadowRadius: 8,
     },
+    emptyStateContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingHorizontal: 40,
+    },
+    emptyStateIcon: {
+      marginBottom: 16,
+    },
+    emptyStateTitle: {
+      fontSize: 20,
+      fontWeight: '600',
+      color: theme.colors.text,
+      textAlign: 'center',
+      marginBottom: 8,
+    },
+    emptyStateText: {
+      fontSize: 16,
+      color: theme.colors.textSecondary,
+      textAlign: 'center',
+      lineHeight: 24,
+    },
   });
 
   const renderItem = ({ item }: { item: Agent }) => {
@@ -548,6 +602,8 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
     );
   };
 
+  const unchattedAgents = getUnchattedAgents();
+
   return (
     <Modal
       visible={visible}
@@ -572,22 +628,36 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
               </View>
               <View style={styles.headerTextContainer}>
                 <Text style={styles.title}>Choose Your AI Assistant</Text>
-                <Text style={styles.subtitle}>Select the perfect AI for your needs</Text>
+                <Text style={styles.subtitle}>
+                  {unchattedAgents.length > 0 
+                    ? `${unchattedAgents.length} agents available to try` 
+                    : 'All agents have been tried'
+                  }
+                </Text>
               </View>
             </View>
           </View>
 
           <FlatList
-            data={loading ? [] : agents}
+            data={loading ? [] : unchattedAgents}
             keyExtractor={(item) => String(item.id)}
             renderItem={renderItem}
             contentContainerStyle={styles.listContainer}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
             showsVerticalScrollIndicator={false}
             ListEmptyComponent={!loading ? (
-              <View style={{ paddingVertical: 40, alignItems: 'center' }}>
-                <Icon name="smart-toy" size={36} color={theme.colors.textSecondary} />
-                <Text style={{ color: theme.colors.textSecondary, marginTop: 8 }}>No AI assistants available</Text>
+              <View style={styles.emptyStateContainer}>
+                <Icon 
+                  name="check-circle" 
+                  size={64} 
+                  color={theme.colors.primary} 
+                  style={styles.emptyStateIcon}
+                />
+                <Text style={styles.emptyStateTitle}>All Agents Tried!</Text>
+                <Text style={styles.emptyStateText}>
+                  You've already chatted with all available AI assistants. 
+                  Create a new custom agent or wait for new ones to be added.
+                </Text>
               </View>
             ) : (
               <View style={{ paddingVertical: 40, alignItems: 'center' }}>

@@ -40,6 +40,7 @@ export interface RegisterRequest {
 export interface ChatMessage {
   id: number;
   user_id: number;
+  agent_id?: number;
   message: string;
   response: string;
   created_at: string;
@@ -101,6 +102,15 @@ export interface ChatStatisticsResponse {
   total_messages: number;
   first_message_date: string | null;
   last_message_date: string | null;
+}
+
+export interface ConversationSummary {
+  agent_id: number;
+  message_count: number;
+  latest_message_date: string;
+  first_message_date: string;
+  latest_message: string;
+  latest_response: string;
 }
 
 // ============================================================================
@@ -343,11 +353,13 @@ class ApiService {
   async getUserMessages(
     userId: number, 
     skip: number = 0, 
-    limit: number = 50
+    limit: number = 50,
+    agentId?: number
   ): Promise<ApiResponse<ChatHistoryResponse>> {
-    console.log('📜 Getting messages for user:', userId);
+    console.log('📜 Getting messages for user:', userId, agentId ? `with agent: ${agentId}` : '');
+    const agentParam = agentId ? `&agent_id=${agentId}` : '';
     return this.makeRequest<ChatHistoryResponse>(
-      `/api/v1/chat/messages?user_id=${userId}&skip=${skip}&limit=${limit}`
+      `/api/v1/chat/messages?user_id=${userId}&skip=${skip}&limit=${limit}${agentParam}`
     );
   }
 
@@ -370,6 +382,11 @@ class ApiService {
     return this.makeRequest<ChatStatisticsResponse>(`/api/v1/chat/statistics?user_id=${userId}`);
   }
 
+  async getConversations(userId: number): Promise<ApiResponse<ConversationSummary[]>> {
+    console.log('💬 Getting conversations for user:', userId);
+    return this.makeRequest<ConversationSummary[]>(`/api/v1/chat/conversations?user_id=${userId}`);
+  }
+
   // ============================================================================
   // AGENT METHODS
   // ============================================================================
@@ -383,6 +400,11 @@ class ApiService {
       // Fallback to all active agents if no user ID provided
       return this.makeRequest<Agent[]>('/api/v1/agents/active/list');
     }
+  }
+
+  async getUnchattedAgents(userId: number): Promise<ApiResponse<Agent[]>> {
+    console.log('🤖 Getting unchatted agents for user:', userId);
+    return this.makeRequest<Agent[]>(`/api/v1/agents/user/${userId}/unchatted`);
   }
 
   async getAgent(agentId: number): Promise<ApiResponse<Agent>> {

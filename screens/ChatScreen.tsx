@@ -19,7 +19,7 @@ import { useTheme } from '../theme/ThemeContext';
 import { useAuth } from '../components/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 import { useAgent } from '../components/AgentContext';
-import { apiService, ChatMessage, Agent } from '../services/api';
+import { apiService, ChatMessage, Agent, ChatMessageWithAgent } from '../services/api';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import AgentCustomizer from '../components/AgentCustomizer';
 import AgentSelector from '../components/AgentSelector';
@@ -41,14 +41,16 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [showAgentSelector, setShowAgentSelector] = useState(false);
+  const [chatHistory, setChatHistory] = useState<ChatMessageWithAgent[]>([]);
+  const [allAgents, setAllAgents] = useState<Agent[]>([]);
+  const [isInChat, setIsInChat] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (user) {
-      // Clear messages immediately when agent changes to avoid showing wrong messages
-      setMessages([]);
-      loadMessages();
+      loadChatHistory();
+      loadAllAgents();
       // Fade in animation
       Animated.timing(fadeAnim, {
         toValue: 1,
@@ -56,24 +58,100 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
         useNativeDriver: true,
       }).start();
     }
-  }, [user, selectedAgent]);
+  }, [user]);
 
   // Reload messages when screen comes into focus (when rejoining app)
   useFocusEffect(
     React.useCallback(() => {
       if (user) {
-        console.log('🔄 Screen focused, reloading messages...');
-        loadMessages();
+        console.log('🔄 Screen focused, reloading data...');
+        loadChatHistory();
+        loadAllAgents();
       }
     }, [user])
   );
 
-  const loadMessages = async () => {
+  // Cleanup typing messages when switching agents or component unmounts
+  useEffect(() => {
+    const cleanupTypingMessages = () => {
+      setMessages(prev => {
+        const typingMessagePattern = language === 'vi' ? '🤖 AI đang trả lời...' : '🤖 AI is typing...';
+        const hasTypingMessages = prev.some(msg => 
+          msg.response && msg.response.includes(typingMessagePattern)
+        );
+        
+        if (hasTypingMessages) {
+          console.log('🧹 Cleanup: Removing stuck typing messages');
+          return prev.filter(msg => 
+            !msg.response || !msg.response.includes(typingMessagePattern)
+          );
+        }
+        return prev;
+      });
+    };
+
+    // Clean up when switching agents
+    if (selectedAgent) {
+      cleanupTypingMessages();
+    }
+
+    // Clean up on component unmount
+    return cleanupTypingMessages;
+  }, [selectedAgent, language]);
+
+  // Load messages when selectedAgent changes
+  useEffect(() => {
+    if (user && selectedAgent && isInChat) {
+      console.log('🔄 Selected agent changed, loading messages for:', selectedAgent.name, 'ID:', selectedAgent.id);
+      loadMessages();
+    }
+  }, [selectedAgent?.id, user?.id, isInChat]); // Use selectedAgent.id instead of selectedAgent to prevent unnecessary re-renders
+
+  const loadChatHistory = async () => {
     if (!user) return;
+
+    try {
+      const response = await apiService.getUserMessages(Number(user.id), 0, 100);
+      if (response.data?.messages) {
+        setChatHistory(response.data.messages as ChatMessageWithAgent[]);
+      }
+    } catch (error) {
+      console.error('Error loading chat history:', error);
+    }
+  };
+
+  const loadAllAgents = async () => {
+    if (!user) return;
+
+    try {
+      const response = await apiService.getAgents(Number(user.id));
+      if (response.data) {
+        setAllAgents(response.data);
+      }
+    } catch (error) {
+      console.error('Error loading all agents:', error);
+    }
+  };
+
+  const loadMessages = async () => {
+    if (!user) {
+      console.log('❌ Cannot load messages: No user');
+      return;
+    }
+    
+    if (!selectedAgent) {
+      console.log('❌ Cannot load messages: No selected agent');
+      return;
+    }
+    
+    if (!isInChat) {
+      console.log('❌ Cannot load messages: Not in chat mode');
+      return;
+    }
     
     setIsLoading(true);
     try {
-      console.log('📜 Loading messages for user:', user.id, 'with agent:', selectedAgent?.id);
+      console.log('📜 Loading messages for user:', user.id, 'with agent:', selectedAgent.id, 'name:', selectedAgent.name);
       
       // Add a small delay to show loading state when switching agents
       if (selectedAgent) {
@@ -145,18 +223,39 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
       created_at: new Date().toISOString(),
     };
 
+    // Store the typing message ID for later removal
+    const typingMessageId = Date.now() + 1;
+
     // Add user message immediately for real-time experience
     setMessages(prev => [...prev, userMessage]);
     
     // Add a temporary "AI is typing" message
     const typingMessage: ChatMessage = {
-      id: Date.now() + 1, // Temporary ID
+      id: typingMessageId, // Use stored ID
       message: '',
       response: language === 'vi' ? '🤖 AI đang trả lời...' : '🤖 AI is typing...',
       user_id: Number(user.id),
       created_at: new Date().toISOString(),
     };
     setMessages(prev => [...prev, typingMessage]);
+    
+    // Safety timeout: remove typing message after 30 seconds if it's still there
+    const typingTimeout = setTimeout(() => {
+      setMessages(prev => {
+        const typingMessagePattern = language === 'vi' ? '🤖 AI đang trả lời...' : '🤖 AI is typing...';
+        const hasTypingMessage = prev.some(msg => 
+          msg.response && msg.response.includes(typingMessagePattern)
+        );
+        
+        if (hasTypingMessage) {
+          console.log('⏰ Safety timeout: Removing stuck typing message');
+          return prev.filter(msg => 
+            !msg.response || !msg.response.includes(typingMessagePattern)
+          );
+        }
+        return prev;
+      });
+    }, 30000); // 30 seconds timeout
     
     // Scroll to bottom to show the new message
     setTimeout(() => {
@@ -186,7 +285,33 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
 
         // Replace the typing message with the actual AI response
         setMessages(prev => {
-          const filteredMessages = prev.filter(msg => msg.id !== Date.now() + 1); // Remove typing message
+          console.log('🔄 Removing typing message with ID:', typingMessageId);
+          console.log('🔄 Current messages before filter:', prev.map(m => ({ id: m.id, response: m.response })));
+          
+          // First try to remove by exact ID match
+          let filteredMessages = prev.filter(msg => {
+            const shouldKeep = msg.id !== typingMessageId;
+            if (!shouldKeep) {
+              console.log('🔄 Removing typing message by ID:', msg.id, msg.response);
+            }
+            return shouldKeep;
+          });
+          
+          // Fallback: if typing message still exists, remove by content pattern
+          const typingMessagePattern = language === 'vi' ? '🤖 AI đang trả lời...' : '🤖 AI is typing...';
+          const hasTypingMessage = filteredMessages.some(msg => 
+            msg.response && msg.response.includes(typingMessagePattern)
+          );
+          
+          if (hasTypingMessage) {
+            console.log('🔄 Fallback: Removing typing message by content pattern');
+            filteredMessages = filteredMessages.filter(msg => 
+              !msg.response || !msg.response.includes(typingMessagePattern)
+            );
+          }
+          
+          console.log('🔄 Messages after filter:', filteredMessages.length);
+          console.log('🔄 Adding AI message:', aiMessage.id, aiMessage.response);
           return [...filteredMessages, aiMessage];
         });
         
@@ -199,6 +324,9 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
         // Log response length for debugging
         console.log(`💬 AI Response length: ${response.data.response.length} characters`);
       }
+      
+      // Clear the typing timeout since we got a response
+      clearTimeout(typingTimeout);
     } catch (error) {
       console.error('Error sending message:', error);
       Alert.alert(
@@ -206,8 +334,23 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
         language === 'vi' ? 'Không thể gửi tin nhắn' : 'Failed to send message'
       );
       // Remove the temporary messages on error
-      setMessages(prev => prev.filter(msg => msg.id !== userMessage.id && msg.id !== Date.now() + 1));
+      setMessages(prev => {
+        console.log('❌ Error cleanup: Removing temporary messages');
+        const filteredMessages = prev.filter(msg => msg.id !== userMessage.id && msg.id !== typingMessageId);
+        
+        // Fallback: also remove any typing messages by content
+        const typingMessagePattern = language === 'vi' ? '🤖 AI đang trả lời...' : '🤖 AI is typing...';
+        const finalMessages = filteredMessages.filter(msg => 
+          !msg.response || !msg.response.includes(typingMessagePattern)
+        );
+        
+        console.log('❌ Messages after error cleanup:', finalMessages.length);
+        return finalMessages;
+      });
       setInputMessage(messageText);
+      
+      // Clear the typing timeout on error
+      clearTimeout(typingTimeout);
     } finally {
       setIsSending(false);
     }
@@ -278,6 +421,69 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
       return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     } else {
       return date.toLocaleDateString();
+    }
+  };
+
+  const formatDate = (dateString: string | null) => {
+    if (!dateString) return language === 'vi' ? 'Chưa có' : 'Never';
+    return new Date(dateString).toLocaleDateString();
+  };
+
+  const getConversationsByAgent = () => {
+    const conversations: { [agentId: number]: ChatMessageWithAgent[] } = {};
+    
+    chatHistory.forEach(message => {
+      if (message.agent_id) {
+        if (!conversations[message.agent_id]) {
+          conversations[message.agent_id] = [];
+        }
+        conversations[message.agent_id].push(message);
+      }
+    });
+
+    // Convert to array and sort by latest message
+    return Object.entries(conversations)
+      .map(([agentId, messages]) => ({
+        agentId: parseInt(agentId),
+        messages: messages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+        latestMessage: messages[0] // Already sorted, so first is latest
+      }))
+      .sort((a, b) => new Date(b.latestMessage.created_at).getTime() - new Date(a.latestMessage.created_at).getTime());
+  };
+
+  const getAgentName = (agentId?: number) => {
+    if (!agentId) return language === 'vi' ? 'Không có Agent' : 'No Agent';
+    const agent = allAgents.find(a => a.id === agentId);
+    return agent ? agent.name : language === 'vi' ? 'Agent Không Xác Định' : 'Unknown Agent';
+  };
+
+  const handleConversationPress = (agentId: number) => {
+    const agent = allAgents.find(a => a.id === agentId);
+    if (agent) {
+      console.log('🔄 Conversation pressed for agent:', agent.name, 'ID:', agent.id);
+      setSelectedAgent(agent);
+      setIsInChat(true);
+      // loadMessages() will be called by useEffect when selectedAgent changes
+    }
+  };
+
+  const handleBackToConversations = () => {
+    setIsInChat(false);
+    setSelectedAgent(null);
+    setMessages([]);
+  };
+
+  const handleCreateNewChat = () => {
+    setShowAgentSelector(true);
+  };
+
+  const handleAgentSelect = (agent: Agent | null) => {
+    setSelectedAgent(agent);
+    setShowAgentSelector(false);
+    if (agent) {
+      console.log('🔄 Agent selected:', agent.name, 'ID:', agent.id);
+      setIsInChat(true);
+      // loadMessages() will be called by useEffect when selectedAgent changes
     }
   };
 
@@ -394,45 +600,77 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     <View style={[styles.header, { backgroundColor: theme.colors.surface, borderBottomColor: theme.colors.border }]}>
       <View style={styles.headerContent}>
         <View style={styles.headerLeft}>
+          {isInChat && (
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={handleBackToConversations}
+            >
+              <Icon name="arrow-back" size={24} color={theme.colors.primary} />
+            </TouchableOpacity>
+          )}
           <View style={[styles.headerAvatar, { backgroundColor: theme.colors.primary }]}>
             <Icon name="smart-toy" size={24} color={theme.colors.surface} />
           </View>
           <View style={styles.headerText}>
             <Text style={[styles.headerTitle, { color: theme.colors.text }]}>
-              {selectedAgent ? selectedAgent.name : (language === 'vi' ? 'Trợ Lý AI' : 'AI Assistant')}
+              {isInChat 
+                ? (selectedAgent ? selectedAgent.name : (language === 'vi' ? 'Trợ Lý AI' : 'AI Assistant'))
+                : (language === 'vi' ? 'Cuộc Trò Chuyện' : 'Conversations')
+              }
             </Text>
             <Text style={[styles.headerSubtitle, { color: theme.colors.textSecondary }]}>
-              {selectedAgent 
-                ? `${selectedAgent.personality} • ${language === 'vi' ? 'Cuộc trò chuyện riêng' : 'Private chat'}`
-                : (language === 'vi' ? 'Chọn một trợ lý để bắt đầu' : 'Choose an assistant to get started')
+              {isInChat 
+                ? (selectedAgent 
+                    ? `${selectedAgent.personality} • ${language === 'vi' ? 'Cuộc trò chuyện riêng' : 'Private chat'}`
+                    : (language === 'vi' ? 'Chọn một trợ lý để bắt đầu' : 'Choose an assistant to get started'))
+                : (language === 'vi' ? 'Chọn cuộc trò chuyện hoặc tạo mới' : 'Select conversation or create new')
               }
             </Text>
           </View>
         </View>
         
         <View style={styles.headerButtons}>
-          <TouchableOpacity 
-            style={[
-              styles.agentButton, 
-              { 
-                backgroundColor: selectedAgent ? theme.colors.primary + '20' : theme.colors.card,
-                borderColor: selectedAgent ? theme.colors.primary + '40' : theme.colors.border,
-                borderWidth: 1,
-              }
-            ]}
-            onPress={() => {
-              console.log('🔍 ChatScreen: Agent button pressed, opening selector...');
-              setShowAgentSelector(true);
-            }}
-          >
-            <Icon 
-              name="person" 
-              size={20} 
-              color={selectedAgent ? theme.colors.primary : theme.colors.textSecondary} 
-            />
-          </TouchableOpacity>
+          {!isInChat && (
+            <TouchableOpacity 
+              style={[
+                styles.agentButton, 
+                { 
+                  backgroundColor: theme.colors.primary + '20',
+                  borderColor: theme.colors.primary + '40',
+                  borderWidth: 1,
+                }
+              ]}
+              onPress={handleCreateNewChat}
+            >
+              <Icon 
+                name="add" 
+                size={20} 
+                color={theme.colors.primary} 
+              />
+            </TouchableOpacity>
+          )}
           
-          {messages.length > 0 && (
+          {isInChat && (
+            <TouchableOpacity 
+              style={[
+                styles.agentButton, 
+                { 
+                  backgroundColor: selectedAgent ? theme.colors.primary + '20' : theme.colors.card,
+                  borderColor: selectedAgent ? theme.colors.primary + '40' : theme.colors.border,
+                  borderWidth: 1,
+                }
+              ]}
+              onPress={() => setShowAgentSelector(true)}
+            >
+              <Icon 
+                name="person" 
+                size={20} 
+                color={selectedAgent ? theme.colors.primary : theme.colors.textSecondary} 
+              />
+            </TouchableOpacity>
+          )}
+          
+          {isInChat && messages.length > 0 && (
             <TouchableOpacity 
               onPress={clearAllMessages} 
               style={[
@@ -448,35 +686,63 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     </View>
   );
 
+  const renderConversationItem = ({ item }: { item: { agentId: number; messages: ChatMessageWithAgent[]; latestMessage: ChatMessageWithAgent } }) => {
+    return (
+      <TouchableOpacity 
+        onPress={() => handleConversationPress(item.agentId)}
+        style={[styles.conversationItem, { backgroundColor: theme.colors.surface }]}
+        activeOpacity={0.7}
+      >
+        <View style={styles.conversationHeader}>
+          <View style={styles.conversationAgentInfo}>
+            <View style={[styles.agentAvatar, { backgroundColor: theme.colors.primary + '20' }]}>
+              <Icon name="smart-toy" size={20} color={theme.colors.primary} />
+            </View>
+            <View style={styles.conversationTextContainer}>
+              <Text style={[styles.conversationAgentName, { color: theme.colors.text }]}>
+                {getAgentName(item.agentId)}
+              </Text>
+              <Text style={[styles.conversationMessage, { color: theme.colors.textSecondary }]} numberOfLines={1}>
+                {item.latestMessage.message}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.conversationMeta}>
+            <Text style={[styles.conversationTime, { color: theme.colors.textSecondary }]}>
+              {formatTime(item.latestMessage.created_at)}
+            </Text>
+            <Text style={[styles.conversationDate, { color: theme.colors.textSecondary }]}>
+              {formatDate(item.latestMessage.created_at)}
+            </Text>
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
   const renderEmptyState = () => (
     <View style={styles.emptyState}>
       <View style={[styles.emptyIcon, { backgroundColor: theme.colors.primary + '20' }]}>
         <Icon name="chat-bubble-outline" size={48} color={theme.colors.primary} />
       </View>
       <Text style={[styles.emptyTitle, { color: theme.colors.text }]}>
-        {language === 'vi' ? 'Bắt Đầu Cuộc Trò Chuyện' : 'Start a Conversation'}
+        {language === 'vi' ? 'Chưa Có Cuộc Trò Chuyện' : 'No Conversations Yet'}
       </Text>
       <Text style={[styles.emptySubtitle, { color: theme.colors.textSecondary }]}>
-        {selectedAgent 
-          ? (language === 'vi' 
-              ? `Bắt đầu cuộc trò chuyện riêng với ${selectedAgent.name}`
-              : `Start a private conversation with ${selectedAgent.name}`)
-          : (language === 'vi' 
-              ? 'Chọn một trợ lý AI để bắt đầu trò chuyện'
-              : 'Choose an AI assistant to begin chatting')
+        {language === 'vi' 
+          ? 'Bắt đầu cuộc trò chuyện đầu tiên với AI assistant'
+          : 'Start your first conversation with an AI assistant'
         }
       </Text>
-      {!selectedAgent && (
-        <TouchableOpacity 
-          style={[styles.selectAgentButton, { backgroundColor: theme.colors.primary }]}
-          onPress={() => setShowAgentSelector(true)}
-        >
-          <Icon name="person" size={20} color="white" />
-          <Text style={styles.selectAgentText}>
-            {language === 'vi' ? 'Chọn Trợ Lý' : 'Choose Assistant'}
-          </Text>
-        </TouchableOpacity>
-      )}
+      <TouchableOpacity 
+        style={[styles.selectAgentButton, { backgroundColor: theme.colors.primary }]}
+        onPress={handleCreateNewChat}
+      >
+        <Icon name="add" size={20} color="white" />
+        <Text style={styles.selectAgentText}>
+          {language === 'vi' ? 'Tạo Cuộc Trò Chuyện Mới' : 'Create New Conversation'}
+        </Text>
+      </TouchableOpacity>
     </View>
   );
 
@@ -515,7 +781,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
       
       <AgentSelector
         selectedAgent={selectedAgent}
-        onAgentSelect={setSelectedAgent}
+        onAgentSelect={handleAgentSelect}
         visible={showAgentSelector}
         onClose={() => setShowAgentSelector(false)}
         userId={Number((user as any).id)}
@@ -536,88 +802,103 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
         userId={Number((user as any).id)}
       />
       
-        <FlatList
-          ref={flatListRef}
-          data={messages}
-        renderItem={({ item, index }) => {
-          console.log('📱 FlatList rendering item:', item, 'at index:', index);
-          return renderMessage(item, index);
-        }}
-          keyExtractor={(item) => item.id.toString()}
-        contentContainerStyle={[
-          styles.messagesList,
-          { paddingBottom: 20 }
-        ]}
-          showsVerticalScrollIndicator={false}
-        onContentSizeChange={() => {
-          console.log('📱 FlatList content size changed, messages length:', messages.length);
-          // Auto-scroll to bottom when content changes
-          if (messages.length > 0) {
-            flatListRef.current?.scrollToEnd({ animated: false });
-          }
-        }}
-        onLayout={() => {
-          console.log('📱 FlatList layout changed, messages length:', messages.length);
-          // Auto-scroll to bottom on layout
-          if (messages.length > 0) {
-            flatListRef.current?.scrollToEnd({ animated: false });
-          }
-        }}
-        ListEmptyComponent={() => {
-          console.log('📱 FlatList showing empty state, messages length:', messages.length);
-          return renderEmptyState();
-        }}
-        ListHeaderComponent={isLoading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="small" color={theme.colors.primary} />
-            <Text style={[styles.loadingText, { color: theme.colors.textSecondary }]}>
-              {language === 'vi' ? 'Đang tải tin nhắn...' : 'Loading messages...'}
-            </Text>
-          </View>
-        ) : null}
-      />
-
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.inputContainer}
-      >
-        <View style={[styles.inputWrapper, { backgroundColor: theme.colors.surface }]}>
-          <TextInput
-            style={[styles.textInput, { color: theme.colors.text }]}
-            value={inputMessage}
-            onChangeText={setInputMessage}
-            placeholder={language === 'vi' ? 'Nhập tin nhắn của bạn...' : 'Type your message...'}
-            placeholderTextColor={theme.colors.textSecondary}
-            multiline
-            maxLength={1000}
-            textAlignVertical="center"
-          />
-          <TouchableOpacity
-            onPress={sendMessage}
-            disabled={!inputMessage.trim() || isSending}
-            style={[
-              styles.sendButton,
-              {
-                backgroundColor: inputMessage.trim() && !isSending 
-                  ? theme.colors.primary 
-                  : theme.colors.border,
-                transform: [{ scale: inputMessage.trim() && !isSending ? 1 : 0.9 }],
-              }
+      {isInChat ? (
+        // Chat Interface
+        <>
+          <FlatList
+            ref={flatListRef}
+            data={messages}
+            renderItem={({ item, index }) => {
+              console.log('📱 FlatList rendering item:', item, 'at index:', index);
+              return renderMessage(item, index);
+            }}
+            keyExtractor={(item) => item.id.toString()}
+            contentContainerStyle={[
+              styles.messagesList,
+              { paddingBottom: 20 }
             ]}
-            activeOpacity={0.8}
+            showsVerticalScrollIndicator={false}
+            onContentSizeChange={() => {
+              console.log('📱 FlatList content size changed, messages length:', messages.length);
+              // Auto-scroll to bottom when content changes
+              if (messages.length > 0) {
+                flatListRef.current?.scrollToEnd({ animated: false });
+              }
+            }}
+            onLayout={() => {
+              console.log('📱 FlatList layout changed, messages length:', messages.length);
+              // Auto-scroll to bottom on layout
+              if (messages.length > 0) {
+                flatListRef.current?.scrollToEnd({ animated: false });
+              }
+            }}
+            ListEmptyComponent={() => {
+              console.log('📱 FlatList showing empty state, messages length:', messages.length);
+              return renderEmptyState();
+            }}
+            ListHeaderComponent={isLoading ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="small" color={theme.colors.primary} />
+                <Text style={[styles.loadingText, { color: theme.colors.textSecondary }]}>
+                  {language === 'vi' ? 'Đang tải tin nhắn...' : 'Loading messages...'}
+                </Text>
+              </View>
+            ) : null}
+          />
+
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={styles.inputContainer}
           >
-            {isSending ? (
-              <ActivityIndicator size="small" color={theme.colors.surface} />
-            ) : (
-              <Icon 
-                name="send" 
-                size={22} 
-                color={inputMessage.trim() ? theme.colors.surface : theme.colors.textSecondary} 
+            <View style={[styles.inputWrapper, { backgroundColor: theme.colors.surface }]}>
+              <TextInput
+                style={[styles.textInput, { color: theme.colors.text }]}
+                value={inputMessage}
+                onChangeText={setInputMessage}
+                placeholder={language === 'vi' ? 'Nhập tin nhắn của bạn...' : 'Type your message...'}
+                placeholderTextColor={theme.colors.textSecondary}
+                multiline
+                maxLength={1000}
+                textAlignVertical="center"
               />
-            )}
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
+              <TouchableOpacity
+                onPress={sendMessage}
+                disabled={!inputMessage.trim() || isSending}
+                style={[
+                  styles.sendButton,
+                  {
+                    backgroundColor: inputMessage.trim() && !isSending 
+                      ? theme.colors.primary 
+                      : theme.colors.border,
+                    transform: [{ scale: inputMessage.trim() && !isSending ? 1 : 0.9 }],
+                  }
+                ]}
+                activeOpacity={0.8}
+              >
+                {isSending ? (
+                  <ActivityIndicator size="small" color={theme.colors.surface} />
+                ) : (
+                  <Icon 
+                    name="send" 
+                    size={22} 
+                    color={inputMessage.trim() ? theme.colors.surface : theme.colors.textSecondary} 
+                  />
+                )}
+              </TouchableOpacity>
+            </View>
+          </KeyboardAvoidingView>
+        </>
+      ) : (
+        // Conversations List
+        <FlatList
+          data={getConversationsByAgent()}
+          keyExtractor={(item) => String(item.agentId)}
+          renderItem={renderConversationItem}
+          contentContainerStyle={styles.conversationsList}
+          showsVerticalScrollIndicator={false}
+          ListEmptyComponent={renderEmptyState}
+        />
+      )}
     </SafeAreaView>
   );
 };
@@ -658,6 +939,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
     marginRight: 16,
+  },
+  backButton: {
+    padding: 8,
+    marginRight: 12,
+    borderRadius: 8,
   },
   headerAvatar: {
     width: 48,
@@ -751,6 +1037,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 16,
   },
+  conversationsList: {
+    flexGrow: 1,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+  },
   messageWrapper: {
     marginBottom: 16,
   },
@@ -836,6 +1127,60 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,0,0,0.1)',
     borderWidth: 1,
     borderColor: 'rgba(255,0,0,0.3)',
+  },
+  conversationItem: {
+    padding: 20,
+    borderRadius: 16,
+    marginBottom: 16,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+  },
+  conversationHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  conversationAgentInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 16,
+  },
+  agentAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  conversationTextContainer: {
+    flex: 1,
+  },
+  conversationAgentName: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 6,
+    letterSpacing: 0.2,
+  },
+  conversationMessage: {
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  conversationMeta: {
+    alignItems: 'flex-end',
+  },
+  conversationTime: {
+    fontSize: 13,
+    marginBottom: 4,
+    fontWeight: '500',
+  },
+  conversationDate: {
+    fontSize: 12,
+    fontWeight: '400',
   },
   emptyState: {
     flex: 1,

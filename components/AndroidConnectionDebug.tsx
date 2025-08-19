@@ -15,7 +15,7 @@ export const AndroidConnectionDebug: React.FC = () => {
 
   const urlsToTest: Array<{ url: string; label: string }> = [
     { url: 'http://10.0.2.2:8000', label: 'Android Emulator (10.0.2.2)' },
-    { url: 'http://localhost:8000', label: 'Localhost' },
+    { url: 'https://chat-app-aqhyf8fhaefzgvha.eastasia-01.azurewebsites.net', label: 'Localhost' },
     { url: 'http://127.0.0.1:8000', label: '127.0.0.1' },
     { url: '192.168.1.10:8000', label: 'Your Computer IP' },
   ];

@@ -31,7 +31,7 @@ export const ConnectionTest: React.FC = () => {
     setResults('Testing all possible connections...\n\n');
     
     const urlsToTest = [
-      { url: 'http://localhost:8000', label: 'Localhost' },
+      { url: 'https://chat-app-aqhyf8fhaefzgvha.eastasia-01.azurewebsites.net', label: 'Localhost' },
       { url: 'http://127.0.0.1:8000', label: '127.0.0.1' },
       { url: '192.168.1.10:8000', label: 'Your IP' },
       { url: 'http://10.0.2.2:8000', label: 'Android Emulator' },

@@ -98,12 +98,34 @@ const AgentCustomizer: React.FC<AgentCustomizerProps> = ({
     setIsLoading(true);
     try {
       if (editingAgent) {
-        // Update existing agent
-        const response = await apiService.updateAgent(editingAgent.id, formData);
+        // Update existing agent - pass userId for authorization
+        if (!userId) {
+          Alert.alert('Error', 'User ID is required to update agent.');
+          return;
+        }
+        const response = await apiService.updateAgent(editingAgent.id, formData, userId);
         if (response.status === 200 && response.data) {
-          onAgentUpdated?.(response.data);
-          Alert.alert('Success', 'Agent updated successfully!');
+          // Check if this was a default agent that got converted to a custom agent
+          const isDefaultAgent = !editingAgent.user_id || editingAgent.user_id === 0;
+          const isNewCustomAgent = response.data.user_id === userId;
+          
+          if (isDefaultAgent && isNewCustomAgent) {
+            // This was a default agent that got converted to a custom agent
+            onAgentCreated?.(response.data);
+            Alert.alert(
+              'Success', 
+              'Default agent customized! A new custom agent has been created based on your changes.'
+            );
+          } else {
+            // Regular update
+            onAgentUpdated?.(response.data);
+            Alert.alert('Success', 'Agent updated successfully!');
+          }
           onClose();
+        } else if (response.status === 403) {
+          Alert.alert('Error', response.error || 'You do not have permission to edit this agent.');
+        } else {
+          Alert.alert('Error', response.error || 'Failed to update agent. Please try again.');
         }
       } else {
         // Create new agent
@@ -112,6 +134,8 @@ const AgentCustomizer: React.FC<AgentCustomizerProps> = ({
           onAgentCreated?.(response.data);
           Alert.alert('Success', 'Agent created successfully!');
           onClose();
+        } else {
+          Alert.alert('Error', response.error || 'Failed to create agent. Please try again.');
         }
       }
     } catch (error) {

@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "ChatApp",
-    "slug": "ChatApp",
+    "slug": "chat-bot-ai",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -27,11 +27,19 @@
       "permissions": [
         "android.permission.INTERNET",
         "android.permission.VIBRATE"
-      ],
-      "usesCleartextTraffic": true
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "0ebf4501-9ac8-4498-8958-4d75d031b16d"
+      }
+    },
+    "owner": "peterzeihan",
+    "plugins": [
+      "react-native-edge-to-edge"
+    ]
   }
 }

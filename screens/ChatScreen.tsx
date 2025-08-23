@@ -41,11 +41,17 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [showAgentSelector, setShowAgentSelector] = useState(false);
+  const [showAgentCustomizer, setShowAgentCustomizer] = useState(false);
+  const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [chatHistory, setChatHistory] = useState<ChatMessageWithAgent[]>([]);
   const [allAgents, setAllAgents] = useState<Agent[]>([]);
   const [isInChat, setIsInChat] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  // Add ref to track sending state to prevent race conditions
+  const isSendingRef = useRef(false);
+  // Add debounce ref to prevent rapid tapping
+  const lastSendTimeRef = useRef(0);
 
   useEffect(() => {
     if (user) {
@@ -81,7 +87,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
         );
         
         if (hasTypingMessages) {
-          console.log('🧹 Cleanup: Removing stuck typing messages');
+          console.log('🧹 Cleaning up stuck typing messages');
           return prev.filter(msg => 
             !msg.response || !msg.response.includes(typingMessagePattern)
           );
@@ -98,6 +104,14 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     // Clean up on component unmount
     return cleanupTypingMessages;
   }, [selectedAgent, language]);
+
+  // Monitor messages state changes for debugging
+  useEffect(() => {
+    console.log('📱 Messages state updated:', messages.length, 'messages');
+    messages.forEach((msg, index) => {
+      console.log(`📱 Message ${index}:`, { id: msg.id, response: msg.response?.substring(0, 50) });
+    });
+  }, [messages]);
 
   // Load messages when selectedAgent changes
   useEffect(() => {
@@ -207,14 +221,33 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
   };
 
   const sendMessage = async () => {
-    if (!user || !inputMessage.trim() || isSending) return;
+    // Use ref-based check to prevent race conditions
+    if (!user || !inputMessage.trim() || isSendingRef.current) {
+      console.log('🚫 Message send blocked:', {
+        noUser: !user,
+        noMessage: !inputMessage.trim(),
+        isSending: isSendingRef.current
+      });
+      return;
+    }
+
+    // Add debounce protection (minimum 1 second between sends)
+    const now = Date.now();
+    if (now - lastSendTimeRef.current < 1000) {
+      console.log('🚫 Message send blocked by debounce:', now - lastSendTimeRef.current, 'ms since last send');
+      return;
+    }
+    lastSendTimeRef.current = now;
 
     const messageText = inputMessage.trim();
+    console.log('💬 Starting message send:', messageText);
+    
+    // Set both state and ref immediately to prevent race conditions
+    setIsSending(true);
+    isSendingRef.current = true;
     setInputMessage('');
     
-    setIsSending(true);
-
-    // Create a user message to show immediately on the right
+    // Add user message immediately for real-time experience
     const userMessage: ChatMessage = {
       id: Date.now(), // Temporary ID
       message: messageText,
@@ -255,7 +288,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
         }
         return prev;
       });
-    }, 30000); // 30 seconds timeout
+    }, 15000); // Reduced to 15 seconds for faster feedback
     
     // Scroll to bottom to show the new message
     setTimeout(() => {
@@ -265,6 +298,11 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     console.log('💬 ChatScreen: Sending message with agent:', selectedAgent?.id);
 
     try {
+      // Test backend connection first
+      console.log('🔍 Testing backend connection...');
+      const healthCheck = await apiService.testConnection();
+      console.log('🔍 Health check result:', healthCheck);
+      
       const response = await apiService.sendMessage(
         Number(user.id), 
         messageText, 
@@ -272,47 +310,91 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
         selectedAgent?.id
       );
       console.log('💬 ChatScreen: Message response:', response);
+      console.log('💬 Response status:', response.status);
+      console.log('💬 Response error:', response.error);
+      
+      if (response.error) {
+        console.error('❌ API returned error:', response.error);
+        throw new Error(response.error);
+      }
       
       if (response.data) {
+        console.log('💬 Response data structure:', JSON.stringify(response.data, null, 2));
+        console.log('💬 Response data type:', typeof response.data);
+        console.log('💬 Response data keys:', Object.keys(response.data));
+        
+        // Check if response data is empty or null
+        if (!response.data || Object.keys(response.data).length === 0) {
+          console.error('❌ Empty response data received');
+          throw new Error('Empty response data from server');
+        }
+        
+        // Validate response structure
+        if (!response.data.id || !response.data.response) {
+          console.error('❌ Invalid response structure:', response.data);
+          // Create a fallback response for debugging
+          const fallbackMessage: ChatMessage = {
+            id: Date.now() + 3,
+            message: '',
+            response: '⚠️ Debug: Backend response was invalid. Please check server logs.',
+            user_id: Number(user.id),
+            created_at: new Date().toISOString(),
+          };
+          
+          setMessages(prev => {
+            const typingMessagePattern = language === 'vi' ? '🤖 AI đang trả lời...' : '🤖 AI is typing...';
+            const filteredMessages = prev.filter(msg => 
+              !msg.response || !msg.response.includes(typingMessagePattern)
+            );
+            return [...filteredMessages, fallbackMessage];
+          });
+          return;
+        }
+        
         // Create separate AI message to show on the left (keep user message)
         const aiMessage: ChatMessage = {
-          id: response.data.id,
+          id: response.data.id || Date.now() + 2, // Fallback ID if not provided
           message: '', // Empty message field for AI
-          response: response.data.response, // AI response
+          response: response.data.response || 'No response received', // AI response with fallback
           user_id: Number(user.id), // Same user_id but with response
-          created_at: response.data.created_at,
+          created_at: response.data.created_at || new Date().toISOString(), // Fallback timestamp
         };
+        
+        console.log('💬 Created AI message:', aiMessage);
 
         // Replace the typing message with the actual AI response
         setMessages(prev => {
           console.log('🔄 Removing typing message with ID:', typingMessageId);
           console.log('🔄 Current messages before filter:', prev.map(m => ({ id: m.id, response: m.response })));
           
-          // First try to remove by exact ID match
-          let filteredMessages = prev.filter(msg => {
-            const shouldKeep = msg.id !== typingMessageId;
-            if (!shouldKeep) {
-              console.log('🔄 Removing typing message by ID:', msg.id, msg.response);
-            }
-            return shouldKeep;
-          });
-          
-          // Fallback: if typing message still exists, remove by content pattern
+          // Remove typing message by ID and content pattern
           const typingMessagePattern = language === 'vi' ? '🤖 AI đang trả lời...' : '🤖 AI is typing...';
-          const hasTypingMessage = filteredMessages.some(msg => 
-            msg.response && msg.response.includes(typingMessagePattern)
-          );
-          
-          if (hasTypingMessage) {
-            console.log('🔄 Fallback: Removing typing message by content pattern');
-            filteredMessages = filteredMessages.filter(msg => 
-              !msg.response || !msg.response.includes(typingMessagePattern)
-            );
-          }
+          const filteredMessages = prev.filter(msg => {
+            // Remove by ID
+            if (msg.id === typingMessageId) {
+              console.log('🔄 Removing typing message by ID:', msg.id, msg.response);
+              return false;
+            }
+            // Remove by content pattern (fallback)
+            if (msg.response && msg.response.includes(typingMessagePattern)) {
+              console.log('🔄 Removing typing message by content pattern:', msg.id, msg.response);
+              return false;
+            }
+            // Remove any message with empty message field and typing response
+            if (!msg.message && msg.response && msg.response.includes(typingMessagePattern)) {
+              console.log('🔄 Removing typing message by structure:', msg.id, msg.response);
+              return false;
+            }
+            return true;
+          });
           
           console.log('🔄 Messages after filter:', filteredMessages.length);
           console.log('🔄 Adding AI message:', aiMessage.id, aiMessage.response);
-          return [...filteredMessages, aiMessage];
+          const newMessages = [...filteredMessages, aiMessage];
+          console.log('🔄 Final messages array:', newMessages.map(m => ({ id: m.id, response: m.response })));
+          
+          // Force a re-render by ensuring the array is new
+          return [...newMessages];
         });
         
         // Scroll to the bottom to show the AI response with a longer delay for longer responses
@@ -329,23 +411,55 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
       clearTimeout(typingTimeout);
     } catch (error) {
       console.error('Error sending message:', error);
+      
+      // Handle specific error cases
+      let errorMessage = language === 'vi' ? 'Không thể gửi tin nhắn' : 'Failed to send message';
+      
+      if (error && typeof error === 'object' && 'status' in error) {
+        const status = (error as any).status;
+        if (status === 409) {
+          errorMessage = language === 'vi' ? 'Tin nhắn đã được gửi trước đó' : 'Message was already sent';
+          console.log('🔄 Duplicate message detected, keeping user message');
+          // For duplicate messages, keep the user message but remove typing message
+          setMessages(prev => {
+            const typingMessagePattern = language === 'vi' ? '🤖 AI đang trả lời...' : '🤖 AI is typing...';
+            return prev.filter(msg => 
+              !msg.response || !msg.response.includes(typingMessagePattern)
+            );
+          });
+          // Don't show alert for duplicate messages
+          clearTimeout(typingTimeout);
+          return;
+        } else if (status === 429) {
+          errorMessage = language === 'vi' ? 'Gửi tin nhắn quá nhanh, vui lòng đợi một chút' : 'Sending messages too quickly, please wait a moment';
+        }
+      }
+      
       Alert.alert(
         language === 'vi' ? 'Lỗi' : 'Error', 
-        language === 'vi' ? 'Không thể gửi tin nhắn' : 'Failed to send message'
+        errorMessage
       );
       // Remove the temporary messages on error
       setMessages(prev => {
         console.log('❌ Error cleanup: Removing temporary messages');
-        const filteredMessages = prev.filter(msg => msg.id !== userMessage.id && msg.id !== typingMessageId);
-        
-        // Fallback: also remove any typing messages by content
         const typingMessagePattern = language === 'vi' ? '🤖 AI đang trả lời...' : '🤖 AI is typing...';
-        const finalMessages = filteredMessages.filter(msg => 
-          !msg.response || !msg.response.includes(typingMessagePattern)
-        );
         
-        console.log('❌ Messages after error cleanup:', finalMessages.length);
-        return finalMessages;
+        const filteredMessages = prev.filter(msg => {
+          // Remove user message and typing message by ID
+          if (msg.id === userMessage.id || msg.id === typingMessageId) {
+            console.log('❌ Removing temporary message by ID:', msg.id);
+            return false;
+          }
+          // Remove typing messages by content pattern
+          if (msg.response && msg.response.includes(typingMessagePattern)) {
+            console.log('❌ Removing typing message by content:', msg.id);
+            return false;
+          }
+          return true;
+        });
+        
+        console.log('❌ Messages after error cleanup:', filteredMessages.length);
+        return filteredMessages;
       });
       setInputMessage(messageText);
       
@@ -353,6 +467,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
       clearTimeout(typingTimeout);
     } finally {
       setIsSending(false);
+      isSendingRef.current = false; // Reset ref after sending
     }
   };
 
@@ -484,6 +599,28 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
       console.log('🔄 Agent selected:', agent.name, 'ID:', agent.id);
       setIsInChat(true);
       // loadMessages() will be called by useEffect when selectedAgent changes
+    }
+  };
+
+  const handleEditAgent = (agent: Agent) => {
+    console.log('✏️ Editing agent:', agent.name, 'ID:', agent.id);
+    setEditingAgent(agent);
+    setShowAgentCustomizer(true);
+  };
+
+  const handleAgentUpdated = (updatedAgent: Agent) => {
+    console.log('✅ Agent updated:', updatedAgent.name, 'ID:', updatedAgent.id);
+    setEditingAgent(null);
+    setShowAgentCustomizer(false);
+    
+    // Update the agent in allAgents list
+    setAllAgents(prev => prev.map(agent => 
+      agent.id === updatedAgent.id ? updatedAgent : agent
+    ));
+    
+    // If this is the currently selected agent, update it too
+    if (selectedAgent && selectedAgent.id === updatedAgent.id) {
+      setSelectedAgent(updatedAgent);
     }
   };
 
@@ -687,36 +824,51 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
   );
 
   const renderConversationItem = ({ item }: { item: { agentId: number; messages: ChatMessageWithAgent[]; latestMessage: ChatMessageWithAgent } }) => {
+    const agent = allAgents.find(a => a.id === item.agentId);
+    
     return (
-      <TouchableOpacity 
-        onPress={() => handleConversationPress(item.agentId)}
-        style={[styles.conversationItem, { backgroundColor: theme.colors.surface }]}
-        activeOpacity={0.7}
-      >
-        <View style={styles.conversationHeader}>
-          <View style={styles.conversationAgentInfo}>
-            <View style={[styles.agentAvatar, { backgroundColor: theme.colors.primary + '20' }]}>
-              <Icon name="smart-toy" size={20} color={theme.colors.primary} />
+      <View style={[styles.conversationItem, { backgroundColor: theme.colors.surface }]}>
+        <TouchableOpacity 
+          onPress={() => handleConversationPress(item.agentId)}
+          style={styles.conversationTouchable}
+          activeOpacity={0.7}
+        >
+          <View style={styles.conversationHeader}>
+            <View style={styles.conversationAgentInfo}>
+              <View style={[styles.agentAvatar, { backgroundColor: theme.colors.primary + '20' }]}>
+                <Icon name="smart-toy" size={20} color={theme.colors.primary} />
+              </View>
+              <View style={styles.conversationTextContainer}>
+                <Text style={[styles.conversationAgentName, { color: theme.colors.text }]}>
+                  {getAgentName(item.agentId)}
+                </Text>
+                <Text style={[styles.conversationMessage, { color: theme.colors.textSecondary }]} numberOfLines={1}>
+                  {item.latestMessage.message}
+                </Text>
+              </View>
             </View>
-            <View style={styles.conversationTextContainer}>
-              <Text style={[styles.conversationAgentName, { color: theme.colors.text }]}>
-                {getAgentName(item.agentId)}
+            <View style={styles.conversationMeta}>
+              <Text style={[styles.conversationTime, { color: theme.colors.textSecondary }]}>
+                {formatTime(item.latestMessage.created_at)}
               </Text>
-              <Text style={[styles.conversationMessage, { color: theme.colors.textSecondary }]} numberOfLines={1}>
-                {item.latestMessage.message}
+              <Text style={[styles.conversationDate, { color: theme.colors.textSecondary }]}>
+                {formatDate(item.latestMessage.created_at)}
               </Text>
             </View>
           </View>
-          <View style={styles.conversationMeta}>
-            <Text style={[styles.conversationTime, { color: theme.colors.textSecondary }]}>
-              {formatTime(item.latestMessage.created_at)}
-            </Text>
-            <Text style={[styles.conversationDate, { color: theme.colors.textSecondary }]}>
-              {formatDate(item.latestMessage.created_at)}
-            </Text>
-          </View>
-        </View>
-      </TouchableOpacity>
+        </TouchableOpacity>
+        
+        {/* Edit Button */}
+        {agent && (
+          <TouchableOpacity
+            onPress={() => handleEditAgent(agent)}
+            style={[styles.editAgentButton, { backgroundColor: theme.colors.primary + '20' }]}
+            activeOpacity={0.7}
+          >
+            <Icon name="edit" size={16} color={theme.colors.primary} />
+          </TouchableOpacity>
+        )}
+      </View>
     );
   };
 
@@ -789,16 +941,17 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
       
       {/* Agent Customizer Modal */}
       <AgentCustomizer
-        visible={false}
-        onClose={() => {}}
+        visible={showAgentCustomizer}
+        onClose={() => {
+          setShowAgentCustomizer(false);
+          setEditingAgent(null);
+        }}
         onAgentCreated={(agent) => {
           setSelectedAgent(agent);
           setShowAgentSelector(false);
         }}
-        onAgentUpdated={(agent) => {
-          setSelectedAgent(agent);
-        }}
-        editingAgent={null}
+        onAgentUpdated={handleAgentUpdated}
+        editingAgent={editingAgent}
         userId={Number((user as any).id)}
       />
       
@@ -808,6 +961,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
           <FlatList
             ref={flatListRef}
             data={messages}
+            key={`messages-${messages.length}-${Date.now()}`} // Force re-render when messages change
             renderItem={({ item, index }) => {
               console.log('📱 FlatList rendering item:', item, 'at index:', index);
               return renderMessage(item, index);
@@ -1137,6 +1291,11 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.12,
     shadowRadius: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  conversationTouchable: {
+    flex: 1,
   },
   conversationHeader: {
     flexDirection: 'row',
@@ -1181,6 +1340,19 @@ const styles = StyleSheet.create({
   conversationDate: {
     fontSize: 12,
     fontWeight: '400',
+  },
+  editAgentButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 12,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
   },
   emptyState: {
     flex: 1,

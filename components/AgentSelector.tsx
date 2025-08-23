@@ -38,6 +38,7 @@ const DEFAULT_AGENTS: Agent[] = [
     feedback_style: 'Constructive and encouraging feedback',
     system_prompt: 'You are Alex, a friendly and supportive AI assistant.',
     is_active: true,
+    user_id: 0, // Default agents have user_id = 0
     created_at: new Date().toISOString(),
     updated_at: undefined,
   },
@@ -48,6 +49,7 @@ const DEFAULT_AGENTS: Agent[] = [
     feedback_style: 'Detailed analysis with specific recommendations',
     system_prompt: 'You are Dr. Sarah, a professional expert AI assistant.',
     is_active: true,
+    user_id: 0, // Default agents have user_id = 0
     created_at: new Date().toISOString(),
     updated_at: undefined,
   },
@@ -58,6 +60,7 @@ const DEFAULT_AGENTS: Agent[] = [
     feedback_style: 'Inspiring suggestions and new angles',
     system_prompt: 'You are Max, a creative AI that ideates and explores.',
     is_active: true,
+    user_id: 0, // Default agents have user_id = 0
     created_at: new Date().toISOString(),
     updated_at: undefined,
   },
@@ -68,6 +71,7 @@ const DEFAULT_AGENTS: Agent[] = [
     feedback_style: 'Step-by-step guidance with examples',
     system_prompt: 'You are Emma, a teacher who explains concepts simply.',
     is_active: true,
+    user_id: 0, // Default agents have user_id = 0
     created_at: new Date().toISOString(),
     updated_at: undefined,
   },
@@ -152,15 +156,109 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
   };
 
   const handleEditAgent = (agent: Agent) => {
+    // Check if this is a default agent (user_id = 0 or null) or user's own agent
+    const isDefaultAgent = !agent.user_id || agent.user_id === 0;
+    const isUserOwnAgent = agent.user_id === userId;
+    const hasUserChattedWithAgent = chatHistory.some(msg => msg.agent_id === agent.id);
+    
+    console.log('Edit Agent Debug:', {
+      agentId: agent.id,
+      agentName: agent.name,
+      agentUserId: agent.user_id,
+      currentUserId: userId,
+      isDefaultAgent,
+      isUserOwnAgent,
+      hasUserChattedWithAgent,
+      chatHistoryLength: chatHistory.length
+    });
+    
+    // Allow editing if:
+    // 1. It's a custom agent owned by the user OR
+    // 2. It's a default agent that the user has chatted with
+    if (isDefaultAgent && !hasUserChattedWithAgent) {
+      Alert.alert(
+        'Cannot Edit Default Agent',
+        'You can only edit default agents after chatting with them. Try having a conversation first!',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    
+    if (!isUserOwnAgent && !hasUserChattedWithAgent) {
+      Alert.alert(
+        'Cannot Edit Agent',
+        'You can only edit agents you own or have chatted with.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    
     setEditingAgent(agent);
     setShowCustomizer(true);
   };
 
-  const handleAgentCreated = (newAgent: Agent) => {
-    setAgents(prev => [...prev, newAgent]);
-    onAgentSelect(newAgent);
-    setContextSelectedAgent(newAgent);
+  const handleDeleteAgent = (agent: Agent) => {
+    // Check if this is a default agent (user_id = 0 or null) or user's own agent
+    const isDefaultAgent = !agent.user_id || agent.user_id === 0;
+    const isUserOwnAgent = agent.user_id === userId;
+    const hasUserChattedWithAgent = chatHistory.some(msg => msg.agent_id === agent.id);
+    
+    // Only allow deletion of custom agents owned by the user
+    // Default agents cannot be deleted even if chatted with
+    if (isDefaultAgent) {
+      Alert.alert(
+        'Cannot Delete Default Agent',
+        'Default agents cannot be deleted, even if you have chatted with them.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    
+    if (!isUserOwnAgent) {
+      Alert.alert(
+        'Cannot Delete Agent',
+        'You can only delete your own custom agents.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    
+    Alert.alert(
+      'Delete Agent',
+      `Are you sure you want to delete "${agent.name}"? This action cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const response = await apiService.deleteAgent(agent.id, userId!);
+              if (response.status === 204) {
+                // Remove agent from list
+                setAgents(prev => prev.filter(a => a.id !== agent.id));
+                // If this was the selected agent, clear selection
+                if (selectedAgent?.id === agent.id) {
+                  onAgentSelect(null);
+                  setContextSelectedAgent(null);
+                }
+                Alert.alert('Success', 'Agent deleted successfully!');
+              } else if (response.status === 403) {
+                Alert.alert('Error', response.error || 'You do not have permission to delete this agent.');
+              } else {
+                Alert.alert('Error', response.error || 'Failed to delete agent. Please try again.');
+              }
+            } catch (error) {
+              console.error('Error deleting agent:', error);
+              Alert.alert('Error', 'Failed to delete agent. Please try again.');
+            }
+          }
+        }
+      ]
+    );
   };
+
+
 
   const handleAgentUpdated = (updatedAgent: Agent) => {
     setAgents(prev => prev.map(agent => 
@@ -169,6 +267,17 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
     if (selectedAgent?.id === updatedAgent.id) {
       onAgentSelect(updatedAgent);
       setContextSelectedAgent(updatedAgent);
+    }
+  };
+
+  const handleAgentCreated = (newAgent: Agent) => {
+    // Add the new agent to the list
+    setAgents(prev => [...prev, newAgent]);
+    
+    // If this was created from editing a default agent, select the new agent
+    if (editingAgent && (!editingAgent.user_id || editingAgent.user_id === 0)) {
+      onAgentSelect(newAgent);
+      setContextSelectedAgent(newAgent);
     }
   };
 
@@ -198,6 +307,30 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
     if (agentName.includes('Max')) return '#45B7D1';
     if (agentName.includes('Emma')) return '#96CEB4';
     return theme.colors.primary;
+  };
+
+  const isAgentEditable = (agent: Agent) => {
+    // Agent is editable if:
+    // 1. It's a custom agent (user_id = actual user ID) OR
+    // 2. It's a default agent that the user has chatted with
+    const isDefaultAgent = !agent.user_id || agent.user_id === 0;
+    const isUserOwnAgent = agent.user_id === userId;
+    const hasUserChattedWithAgent = chatHistory.some(msg => msg.agent_id === agent.id);
+    
+    const isEditable = isUserOwnAgent || (isDefaultAgent && hasUserChattedWithAgent);
+    
+    console.log('isAgentEditable Debug:', {
+      agentId: agent.id,
+      agentName: agent.name,
+      agentUserId: agent.user_id,
+      currentUserId: userId,
+      isDefaultAgent,
+      isUserOwnAgent,
+      hasUserChattedWithAgent,
+      isEditable
+    });
+    
+    return isEditable;
   };
 
   const styles = StyleSheet.create({
@@ -453,6 +586,18 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
       shadowOpacity: 0.08,
       shadowRadius: 4,
     },
+    deleteIndicator: {
+      position: 'absolute',
+      top: -4,
+      right: -4,
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      justifyContent: 'center',
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: theme.colors.error + '40',
+    },
     createAgentButton: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -547,11 +692,16 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
     const isSelected = selectedAgent?.id === item.id;
     const agentColor = getAgentColor(item.name);
     const agentIcon = getAgentIcon(item.name);
+    const isEditable = isAgentEditable(item);
+    const isDefaultAgent = !item.user_id || item.user_id === 0;
+    const isUserOwnAgent = item.user_id === userId;
+    const hasUserChattedWithAgent = chatHistory.some(msg => msg.agent_id === item.id);
 
     return (
       <Pressable
         style={[styles.agentCard, isSelected && styles.selectedAgentCard]}
         onPress={() => handleAgentSelect(item)}
+        onLongPress={() => handleDeleteAgent(item)}
         android_ripple={{ color: theme.colors.primary + '12' }}
       >
         {/* Selection Indicator */}
@@ -568,20 +718,34 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
           <View style={styles.agentInfo}>
             <Text style={[styles.agentName, isSelected && styles.selectedAgentName]} numberOfLines={1}>{item.name}</Text>
             <Text style={styles.agentType} numberOfLines={1}>
-              {item.name.includes('Alex') ? 'Friendly' :
+              {isDefaultAgent ? (hasUserChattedWithAgent ? 'Customizable Default' : 'Default Agent') :
+               item.name.includes('Alex') ? 'Friendly' :
                item.name.includes('Dr. Sarah') ? 'Expert' :
                item.name.includes('Max') ? 'Creative' :
-               item.name.includes('Emma') ? 'Teacher' : 'AI Assistant'}
+               item.name.includes('Emma') ? 'Teacher' : 'Custom Agent'}
             </Text>
           </View>
           
-          {/* Edit Button - moved inside header */}
-          <TouchableOpacity
-            style={styles.editButton}
-            onPress={() => handleEditAgent(item)}
-          >
-            <Icon name="edit" size={18} color={theme.colors.primary} />
-          </TouchableOpacity>
+          {/* Edit Button - only show for editable agents */}
+          {isEditable ? (
+            <TouchableOpacity
+              style={styles.editButton}
+              onPress={() => handleEditAgent(item)}
+            >
+              <Icon name="edit" size={18} color={theme.colors.primary} />
+            </TouchableOpacity>
+          ) : (
+            <View style={[styles.editButton, { backgroundColor: theme.colors.border + '40' }]}>
+              <Icon name="lock" size={18} color={theme.colors.textSecondary} />
+            </View>
+          )}
+          
+          {/* Delete indicator for custom agents only */}
+          {!isDefaultAgent && isUserOwnAgent && (
+            <View style={[styles.deleteIndicator, { backgroundColor: theme.colors.error + '20' }]}>
+              <Icon name="delete" size={12} color={theme.colors.error} />
+            </View>
+          )}
         </View>
 
         <Text style={styles.agentDescription} numberOfLines={3}>
@@ -595,7 +759,9 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
             </Text>
           </View>
           <View style={styles.featureTag}>
-            <Text style={styles.featureText}>Reliable</Text>
+            <Text style={styles.featureText}>
+              {isDefaultAgent ? (hasUserChattedWithAgent ? 'Customizable' : 'Default') : 'Custom'}
+            </Text>
           </View>
         </View>
       </Pressable>
@@ -633,6 +799,7 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
                     ? `${unchattedAgents.length} agents available to try` 
                     : 'All agents have been tried'
                   }
+                  {userId && ' • Chat with agents to customize them • Long-press custom agents to delete'}
                 </Text>
               </View>
             </View>

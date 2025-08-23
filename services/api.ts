@@ -71,6 +71,7 @@ export interface Agent {
   feedback_style: string;
   system_prompt: string;
   is_active: boolean;
+  user_id?: number; // Add user_id field for ownership
   created_at: string;
   updated_at?: string;
 }
@@ -263,6 +264,22 @@ class ApiService {
         return { data, status: response.status };
       } else {
         console.log(`❌ HTTP Error for: ${fullUrl} - Status: ${response.status}`);
+        
+        // Handle specific error cases
+        if (response.status === 409) {
+          return {
+            error: 'Duplicate message detected - this message was already sent',
+            status: response.status,
+          };
+        }
+        
+        if (response.status === 429) {
+          return {
+            error: 'Too many messages sent too quickly - please wait a moment',
+            status: response.status,
+          };
+        }
+        
         return {
           error: data.detail || `HTTP ${response.status}`,
           status: response.status,
@@ -339,11 +356,16 @@ class ApiService {
     agentId?: number
   ): Promise<ApiResponse<ChatMessageWithAgent>> {
     console.log('💬 Sending message for user:', userId, 'with agent:', agentId);
+    
+    // Add unique request ID to prevent duplicate processing
+    const requestId = `msg_${userId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
     return this.makeRequest<ChatMessageWithAgent>('/api/v1/chat/send', {
       method: 'POST',
       body: JSON.stringify({
         user_id: userId,
         message: message,
+        request_id: requestId, // Add unique request ID
         ...(response && { response }),
         ...(agentId && { agent_id: agentId })
       }),
@@ -424,17 +446,17 @@ class ApiService {
     });
   }
 
-  async updateAgent(agentId: number, agentData: AgentUpdate): Promise<ApiResponse<Agent>> {
-    console.log('🤖 Updating agent:', agentId);
-    return this.makeRequest<Agent>(`/api/v1/agents/${agentId}`, {
+  async updateAgent(agentId: number, agentData: AgentUpdate, userId: number): Promise<ApiResponse<Agent>> {
+    console.log('🤖 Updating agent:', agentId, 'by user:', userId);
+    return this.makeRequest<Agent>(`/api/v1/agents/${agentId}?user_id=${userId}`, {
       method: 'PUT',
       body: JSON.stringify(agentData),
     });
   }
 
-  async deleteAgent(agentId: number): Promise<ApiResponse<void>> {
-    console.log('🤖 Deleting agent:', agentId);
-    return this.makeRequest<void>(`/api/v1/agents/${agentId}`, {
+  async deleteAgent(agentId: number, userId: number): Promise<ApiResponse<void>> {
+    console.log('🤖 Deleting agent:', agentId, 'by user:', userId);
+    return this.makeRequest<void>(`/api/v1/agents/${agentId}?user_id=${userId}`, {
       method: 'DELETE',
     });
   }

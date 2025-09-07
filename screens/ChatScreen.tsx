@@ -14,6 +14,7 @@ import {
   StatusBar,
   Animated,
   Dimensions,
+  Modal,
 } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { useAuth } from '../components/AuthContext';
@@ -24,6 +25,8 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import AgentCustomizer from '../components/AgentCustomizer';
 import AgentSelector from '../components/AgentSelector';
 import { useFocusEffect } from '@react-navigation/native';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
 
 interface ChatScreenProps {
   navigation: any;
@@ -52,6 +55,11 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
   const isSendingRef = useRef(false);
   // Add debounce ref to prevent rapid tapping
   const lastSendTimeRef = useRef(0);
+  
+  // File import modal state
+  const [showFileModal, setShowFileModal] = useState(false);
+  const [fileModalContent, setFileModalContent] = useState('');
+  const [fileModalName, setFileModalName] = useState('');
 
   useEffect(() => {
     if (user) {
@@ -525,6 +533,356 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
         },
       ]
     );
+  };
+
+  const handleImportTxt = async () => {
+    console.log('📁 handleImportTxt called');
+    try {
+      // Ensure in chat mode
+      if (!isInChat) {
+        console.log('📁 Not in chat mode, showing error');
+        Alert.alert(
+          language === 'vi' ? 'Lỗi' : 'Error',
+          language === 'vi' ? 'Hãy chọn cuộc trò chuyện trước' : 'Select a conversation first'
+        );
+        return;
+      }
+
+      console.log('📁 In chat mode, proceeding with file import');
+      let content: string = '';
+      let fileName: string = 'conversation.txt';
+
+      if (Platform.OS === 'web') {
+        console.log('📁 Web platform: Creating file input');
+        // Web platform: Use HTML file input
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.txt';
+        
+        input.onchange = async (event: any) => {
+          console.log('📁 File input changed, processing file');
+          const file = event.target.files[0];
+          if (file) {
+            console.log('📁 File selected:', file.name, 'Size:', file.size);
+            try {
+              content = await file.text();
+              fileName = file.name;
+              console.log('📁 File content read successfully, length:', content.length);
+              console.log('📁 Calling showFileProcessingOptions with:', fileName);
+              showFileProcessingOptions(content, fileName);
+            } catch (error) {
+              console.error('Error reading file:', error);
+              Alert.alert(
+                language === 'vi' ? 'Lỗi' : 'Error',
+                language === 'vi' ? 'Không thể đọc tệp' : 'Could not read file'
+              );
+            }
+          } else {
+            console.log('📁 No file selected');
+          }
+        };
+        
+        console.log('📁 Clicking file input');
+        input.click();
+        return; // Exit early for web platform
+      } else {
+        // Mobile platform: Use DocumentPicker and FileSystem
+      const result: any = await DocumentPicker.getDocumentAsync({
+        type: 'text/plain',
+        multiple: false,
+        copyToCacheDirectory: true,
+      } as any);
+
+      // Handle cancel across API shapes
+      if ((result && 'canceled' in result && result.canceled) || (result && result.type === 'cancel')) {
+        return;
+      }
+
+      let file: any = null;
+      if (result && 'assets' in result && Array.isArray(result.assets) && result.assets.length > 0) {
+        file = result.assets[0];
+      } else if (result && result.type === 'success') {
+        file = result;
+      }
+
+      if (!file || !file.uri) {
+        Alert.alert(
+          language === 'vi' ? 'Lỗi' : 'Error',
+          language === 'vi' ? 'Không thể chọn tệp' : 'Could not pick file'
+        );
+        return;
+      }
+
+        content = await FileSystem.readAsStringAsync(file.uri, { encoding: FileSystem.EncodingType.UTF8 });
+        fileName = file.name || 'conversation.txt';
+      }
+
+      showFileProcessingOptions(content, fileName);
+    } catch (error) {
+      console.error('Error importing text file:', error);
+      Alert.alert(
+        language === 'vi' ? 'Lỗi' : 'Error',
+        language === 'vi' ? 'Không thể nhập tệp văn bản' : 'Could not import text file'
+      );
+    }
+  };
+
+  const sendMessageWithContent = async (messageText: string) => {
+    // Use ref-based check to prevent race conditions
+    if (!user || !messageText.trim() || isSendingRef.current) {
+      console.log('🚫 Message send blocked:', {
+        noUser: !user,
+        noMessage: !messageText.trim(),
+        isSending: isSendingRef.current
+      });
+      return;
+    }
+
+    // Add debounce protection (minimum 1 second between sends)
+    const now = Date.now();
+    if (now - lastSendTimeRef.current < 1000) {
+      console.log('🚫 Message send blocked by debounce:', now - lastSendTimeRef.current, 'ms since last send');
+      console.log('🚫 Debounce blocking - this might be why file import doesn\'t work if you try too quickly');
+      return;
+    }
+    lastSendTimeRef.current = now;
+
+    console.log('💬 Starting message send with content:', messageText);
+    
+    // Set both state and ref immediately to prevent race conditions
+    setIsSending(true);
+    isSendingRef.current = true;
+    
+    // Add user message immediately for real-time experience
+    const userMessage: ChatMessage = {
+      id: Date.now(), // Temporary ID
+      message: messageText.trim(),
+      response: '', // No response for user messages
+      user_id: Number(user.id),
+      created_at: new Date().toISOString(),
+    };
+
+    // Store the typing message ID for later removal
+    const typingMessageId = Date.now() + 1;
+
+    // Add user message immediately for real-time experience
+    console.log('💬 Adding user message to chat:', userMessage);
+    setMessages(prev => {
+      const newMessages = [...prev, userMessage];
+      console.log('💬 Updated messages count:', newMessages.length);
+      console.log('💬 Last message:', newMessages[newMessages.length - 1]);
+      return newMessages;
+    });
+    
+    // Add a temporary "AI is typing" message
+    const typingMessage: ChatMessage = {
+      id: typingMessageId, // Use stored ID
+      message: '',
+      response: language === 'vi' ? 'AI đang trả lời...' : 'AI is typing...',
+      user_id: Number(user.id),
+      created_at: new Date().toISOString(),
+    };
+    
+    console.log('💬 Adding typing message to chat:', typingMessage);
+    setMessages(prev => {
+      const newMessages = [...prev, typingMessage];
+      console.log('💬 Updated messages count with typing:', newMessages.length);
+      return newMessages;
+    });
+
+    try {
+      console.log('💬 ChatScreen: Sending message with agent:', selectedAgent?.id);
+
+      // Test backend connection first
+      console.log('🔍 Testing backend connection...');
+      const healthCheck = await apiService.testConnection();
+      console.log('🔍 Health check result:', healthCheck);
+      
+      const response = await apiService.sendMessage(
+        Number(user.id), 
+        messageText.trim(), 
+        undefined, 
+        selectedAgent?.id
+      );
+      console.log('💬 ChatScreen: Message response:', response);
+      console.log('💬 Response status:', response.status);
+      console.log('💬 Response error:', response.error);
+      
+      if (response.error) {
+        console.error('❌ API returned error:', response.error);
+        throw new Error(response.error);
+      }
+      
+      if (response.data) {
+        console.log('💬 Response data structure:', JSON.stringify(response.data, null, 2));
+        console.log('💬 Response data type:', typeof response.data);
+        console.log('💬 Response data keys:', Object.keys(response.data));
+        
+        // Check if response data is empty or null
+        if (!response.data || Object.keys(response.data).length === 0) {
+          console.error('❌ Empty response data received');
+          throw new Error('Empty response data from server');
+        }
+
+        // Remove the typing message
+        console.log('💬 Removing typing message with ID:', typingMessageId);
+        setMessages(prev => {
+          const filteredMessages = prev.filter(msg => msg.id !== typingMessageId);
+          console.log('💬 Messages after removing typing:', filteredMessages.length);
+          return filteredMessages;
+        });
+        
+        // Add the actual response message
+        const responseMessage: ChatMessage = {
+          id: response.data.id || Date.now(),
+          message: response.data.message || '',
+          response: response.data.response || '',
+          user_id: response.data.user_id || Number(user.id),
+          created_at: response.data.created_at || new Date().toISOString(),
+        };
+        
+        console.log('💬 Adding response message to chat:', responseMessage);
+        setMessages(prev => {
+          const newMessages = [...prev, responseMessage];
+          console.log('💬 Final messages count:', newMessages.length);
+          console.log('💬 All messages:', newMessages.map(m => ({ id: m.id, message: m.message.substring(0, 50), response: m.response.substring(0, 50) })));
+          return newMessages;
+        });
+        console.log('✅ Message sent and response received successfully');
+      } else {
+        console.error('❌ No response data received');
+        throw new Error('No response data from server');
+      }
+      
+    } catch (error) {
+      console.error('❌ Error sending message:', error);
+      
+      // Remove the typing message
+      setMessages(prev => prev.filter(msg => msg.id !== typingMessageId));
+      
+      // Add error message
+      const errorMessage: ChatMessage = {
+        id: Date.now(),
+        message: '',
+        response: language === 'vi' 
+          ? 'Xin lỗi, đã xảy ra lỗi khi gửi tin nhắn. Vui lòng thử lại.'
+          : 'Sorry, there was an error sending the message. Please try again.',
+        user_id: Number(user.id),
+        created_at: new Date().toISOString(),
+      };
+      
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsSending(false);
+      isSendingRef.current = false;
+    }
+  };
+
+  const processFileContent = async (content: string) => {
+    console.log('📁 processFileContent called with content length:', content.length);
+    console.log('📁 Current inputMessage:', inputMessage);
+    console.log('📁 User status:', { user: !!user, userId: user?.id });
+    console.log('📁 Is sending status:', isSendingRef.current);
+    
+    const MAX = 1000; // Keep consistent with TextInput maxLength
+    let messageText = content; // Use only file content, don't combine with inputMessage
+
+    if (messageText.length > MAX) {
+      messageText = messageText.slice(0, MAX);
+      Alert.alert(
+        language === 'vi' ? 'Nội dung quá dài' : 'Content too long',
+        language === 'vi'
+          ? `Đã cắt còn ${MAX} ký tự để phù hợp ô nhập`
+          : `Truncated to ${MAX} characters to fit input`
+      );
+    }
+
+    console.log('📁 Final messageText length:', messageText.length);
+    console.log('📁 MessageText preview:', messageText.substring(0, 100) + '...');
+    console.log('📁 MessageText trimmed:', messageText.trim().length > 0);
+
+    // Clear the input field first
+    setInputMessage('');
+    console.log('📁 Input field cleared');
+    
+    // Check all blocking conditions before sending
+    console.log('📁 Pre-send checks:', {
+      hasUser: !!user,
+      hasMessage: messageText.trim().length > 0,
+      isNotSending: !isSendingRef.current,
+      timeSinceLastSend: Date.now() - lastSendTimeRef.current
+    });
+    
+    // Automatically send the message
+    console.log('📁 Calling sendMessageWithContent...');
+    await sendMessageWithContent(messageText);
+    console.log('📁 sendMessageWithContent completed');
+  };
+
+  const handleUploadToBackend = async (content: string, fileName: string) => {
+    try {
+      console.log('📁 Uploading file to backend for processing...');
+      
+      const response = await apiService.uploadConversationFile(
+        content, 
+        fileName, 
+        Number(user?.id)
+      );
+      
+      if (response.error) {
+        console.error('❌ Upload failed:', response.error);
+        Alert.alert(
+          language === 'vi' ? 'Lỗi' : 'Error',
+          language === 'vi' ? 'Không thể tải lên tệp' : 'Failed to upload file'
+        );
+        return;
+      }
+      
+      if (response.data) {
+        console.log('✅ Upload successful:', response.data);
+        
+        const productsFound = response.data.total_products_found || 0;
+        const productsAdded = response.data.total_products_added || 0;
+        
+        // Also send the content to chat conversation
+        console.log('📁 Sending uploaded content to chat conversation...');
+        await processFileContent(content);
+        
+        // Show success message after sending to chat
+        Alert.alert(
+          language === 'vi' ? 'Tải lên thành công' : 'Upload Successful',
+          language === 'vi' 
+            ? `Tìm thấy ${productsFound} sản phẩm và đã thêm ${productsAdded} vào dataset. Nội dung đã được gửi vào cuộc trò chuyện.`
+            : `Found ${productsFound} products and added ${productsAdded} to dataset. Content has been sent to the conversation.`,
+          [
+            {
+              text: language === 'vi' ? 'OK' : 'OK',
+              style: 'default'
+            }
+          ]
+        );
+      }
+      
+    } catch (error) {
+      console.error('❌ Upload error:', error);
+      Alert.alert(
+        language === 'vi' ? 'Lỗi' : 'Error',
+        language === 'vi' ? 'Không thể tải lên tệp' : 'Failed to upload file'
+      );
+    }
+  };
+
+  const showFileProcessingOptions = (content: string, fileName: string) => {
+    console.log('📁 showFileProcessingOptions called with:', fileName);
+    console.log('📁 Content length:', content.length);
+    console.log('📁 About to show custom modal dialog');
+    
+    // Set modal data and show modal
+    setFileModalContent(content);
+    setFileModalName(fileName);
+    setShowFileModal(true);
+    
+    console.log('📁 Custom modal dialog shown');
   };
 
   const formatTime = (dateString: string) => {
@@ -1016,6 +1374,46 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
                 textAlignVertical="center"
               />
               <TouchableOpacity
+                onPress={handleImportTxt}
+                style={[
+                  styles.importButton,
+                  {
+                    backgroundColor: theme.colors.surface,
+                    borderColor: theme.colors.border,
+                  }
+                ]}
+                activeOpacity={0.8}
+              >
+                <Icon
+                  name="attach-file"
+                  size={22}
+                  color={theme.colors.textSecondary}
+                />
+              </TouchableOpacity>
+              
+              {/* Test Dialog Button - Remove this after debugging */}
+              <TouchableOpacity
+                onPress={() => {
+                  console.log('🧪 Test dialog button pressed');
+                  showFileProcessingOptions('This is a test message from file import.', 'test.txt');
+                }}
+                style={[
+                  styles.importButton,
+                  {
+                    backgroundColor: theme.colors.error,
+                    borderColor: theme.colors.error,
+                    marginLeft: 8,
+                  }
+                ]}
+                activeOpacity={0.8}
+              >
+                <Icon
+                  name="bug-report"
+                  size={22}
+                  color={theme.colors.surface}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
                 onPress={sendMessage}
                 disabled={!inputMessage.trim() || isSending}
                 style={[
@@ -1053,6 +1451,65 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
           ListEmptyComponent={renderEmptyState}
         />
       )}
+      
+      {/* File Import Modal */}
+      <Modal
+        visible={showFileModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowFileModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: theme.colors.surface }]}>
+            <Text style={[styles.modalTitle, { color: theme.colors.text }]}>
+              {language === 'vi' ? 'Xử lý tệp' : 'Process File'}
+            </Text>
+            <Text style={[styles.modalMessage, { color: theme.colors.textSecondary }]}>
+              {language === 'vi' 
+                ? `Tệp "${fileModalName}" đã được đọc thành công. Chọn cách xử lý:`
+                : `File "${fileModalName}" has been read successfully. Choose how to process:`
+              }
+            </Text>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalCancelButton, { borderColor: theme.colors.border }]}
+                onPress={() => {
+                  console.log('📁 User chose: Cancel');
+                  setShowFileModal(false);
+                }}
+              >
+                <Text style={[styles.modalButtonText, { color: theme.colors.textSecondary }]}>
+                  {language === 'vi' ? 'Hủy' : 'Cancel'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalPrimaryButton, { backgroundColor: theme.colors.primary }]}
+                onPress={() => {
+                  console.log('📁 User chose: Send as Message');
+                  setShowFileModal(false);
+                  processFileContent(fileModalContent);
+                }}
+              >
+                <Text style={[styles.modalButtonText, { color: theme.colors.surface }]}>
+                  {language === 'vi' ? 'Gửi tin nhắn' : 'Send as Message'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalSecondaryButton, { borderColor: theme.colors.primary }]}
+                onPress={() => {
+                  console.log('📁 User chose: Upload for Processing');
+                  setShowFileModal(false);
+                  handleUploadToBackend(fileModalContent, fileModalName);
+                }}
+              >
+                <Text style={[styles.modalButtonText, { color: theme.colors.primary }]}>
+                  {language === 'vi' ? 'Tải lên và gửi tin nhắn' : 'Upload & Send Message'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -1451,6 +1908,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(0,0,0,0.05)',
   },
+  importButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
+    borderWidth: 1,
+  },
   contextContainer: {
     marginTop: 12,
     paddingTop: 12,
@@ -1465,6 +1931,64 @@ const styles = StyleSheet.create({
   contextText: {
     fontSize: 14,
     lineHeight: 18,
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    borderRadius: 12,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  modalMessage: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 24,
+    textAlign: 'center',
+  },
+  modalButtons: {
+    flexDirection: 'column',
+    gap: 12,
+  },
+  modalButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCancelButton: {
+    borderWidth: 1,
+  },
+  modalPrimaryButton: {
+    // backgroundColor set dynamically
+  },
+  modalSecondaryButton: {
+    borderWidth: 1,
+  },
+  modalButtonText: {
+    fontSize: 16,
+    fontWeight: '500',
   },
 });
 

@@ -399,6 +399,61 @@ class ApiService {
     });
   }
 
+  // ============================================================================
+  // FILE PROCESSING METHODS
+  // ============================================================================
+
+  async uploadConversationFile(
+    fileContent: string, 
+    fileName: string, 
+    userId: number
+  ): Promise<ApiResponse<any>> {
+    console.log('📁 Uploading conversation file:', fileName, 'for user:', userId);
+    
+    try {
+      // Create a FormData object
+      const formData = new FormData();
+      
+      // Create a Blob from the file content
+      const blob = new Blob([fileContent], { type: 'text/plain' });
+      
+      // Append the file to FormData
+      formData.append('file', blob, fileName);
+      formData.append('user_id', userId.toString());
+      
+      // Make the request with FormData
+      const response = await fetch(`${this.baseUrl}/api/v1/file-processing/upload-conversation`, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          // Don't set Content-Type header, let the browser set it with boundary
+        },
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+      
+      const data = await response.json();
+      console.log('✅ File upload successful:', data);
+      
+      return {
+        data,
+        error: null,
+        status: response.status
+      };
+      
+    } catch (error) {
+      console.error('❌ File upload failed:', error);
+      return {
+        data: null,
+        error: error instanceof Error ? error.message : 'File upload failed',
+        status: 500
+      };
+    }
+  }
+
   async getChatStatistics(userId: number): Promise<ApiResponse<ChatStatisticsResponse>> {
     console.log('📊 Getting chat statistics for user:', userId);
     return this.makeRequest<ChatStatisticsResponse>(`/api/v1/chat/statistics?user_id=${userId}`);

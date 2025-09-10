@@ -2,16 +2,16 @@ import { Platform } from 'react-native';
 
 // Get the appropriate base URL based on the environment and device
 const getBaseUrl = () => {
-  // Use localhost for development
-  return 'http://localhost:8000';
+  // Use Azure production URL
+  return 'https://chat-app-aqhyf8fhaefzgvha.eastasia-01.azurewebsites.net';
 };
 
 // Improved fallback URLs with proper protocols
 export const FALLBACK_URLS = [
-  'http://localhost:8000',    // Primary localhost
+  'https://chat-app-aqhyf8fhaefzgvha.eastasia-01.azurewebsites.net', // Primary Azure production
+  'http://localhost:8000',    // Localhost for development
   'http://127.0.0.1:8000',   // Alternative localhost
   'http://192.168.1.13:8000', // LAN IP for Android devices
-  'http://192.168.1.13:8000', // Alternative LAN IP
   'http://10.0.2.2:8000',     // Android emulator loopback to host
 ];
 

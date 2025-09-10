@@ -2,40 +2,18 @@ import { Platform } from 'react-native';
 
 // Get the appropriate base URL based on the environment and device
 const getBaseUrl = () => {
-  // For React Native development, we need different URLs based on the device type
-  
-  // Check if we're in development mode
-  if (__DEV__) {
-    if (Platform.OS === 'android') {
-      // Android device or emulator - use LAN IP so physical devices can connect
-      // Make sure to use http:// prefix
-      return 'http://localhost:8000';
-    } else if (Platform.OS === 'web') {
-      // Web browser
-      return 'http://localhost:8000';
-    } else {
-      // iOS or other
-      return 'http://localhost:8000';
-    }
-  } else {
-    // Production mode - use your production server URL
-    return 'http://localhost:8000';
-  }
+  // Use localhost for development
+  return 'http://localhost:8000';
 };
 
 // Improved fallback URLs with proper protocols
-export const FALLBACK_URLS = Platform.OS === 'android'
-  ? [
-      'http://192.168.1.10:8000', // LAN IP for Android devices
-      'http://192.168.1.11:8000', // Alternative LAN IP
-      'http://10.0.2.2:8000',     // Android emulator loopback to host
-      'http://localhost:8000',    // Localhost (for web/iOS dev)
-      'http://127.0.0.1:8000',    // Alternative localhost
-    ]
-  : [
-      'http://localhost:8000',
-      'http://127.0.0.1:8000',
-    ];
+export const FALLBACK_URLS = [
+  'http://localhost:8000',    // Primary localhost
+  'http://127.0.0.1:8000',   // Alternative localhost
+  'http://192.168.1.13:8000', // LAN IP for Android devices
+  'http://192.168.1.13:8000', // Alternative LAN IP
+  'http://10.0.2.2:8000',     // Android emulator loopback to host
+];
 
 export const API_CONFIG = {
   BASE_URL: getBaseUrl(),

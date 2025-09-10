@@ -44,6 +44,7 @@ export interface ChatMessage {
   message: string;
   response: string;
   created_at: string;
+  fileName?: string; // Optional field for file attachments
 }
 
 export interface ChatMessageCreate {
@@ -358,7 +359,16 @@ class ApiService {
     console.log('💬 Sending message for user:', userId, 'with agent:', agentId);
     
     // Add unique request ID to prevent duplicate processing
-    const requestId = `msg_${userId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    // Use a more robust ID generation with user ID, timestamp, and crypto random
+    let randomPart: string;
+    try {
+      // Use crypto.getRandomValues if available (more secure)
+      randomPart = crypto.getRandomValues(new Uint32Array(1))[0].toString(36);
+    } catch {
+      // Fallback to Math.random if crypto API is not available
+      randomPart = Math.random().toString(36).substring(2, 11);
+    }
+    const requestId = `msg_${userId}_${Date.now()}_${randomPart}`;
     
     return this.makeRequest<ChatMessageWithAgent>('/api/v1/chat/send', {
       method: 'POST',
@@ -366,6 +376,35 @@ class ApiService {
         user_id: userId,
         message: message,
         request_id: requestId, // Add unique request ID
+        ...(response && { response }),
+        ...(agentId && { agent_id: agentId })
+      }),
+    });
+  }
+
+  async sendMessageExternalAPI(
+    userId: number, 
+    message: string, 
+    response?: string, 
+    agentId?: number
+  ): Promise<ApiResponse<ChatMessageWithAgent>> {
+    console.log('🌐 Sending message via external API for user:', userId, 'with agent:', agentId);
+    
+    // Add unique request ID to prevent duplicate processing
+    let randomPart: string;
+    try {
+      randomPart = crypto.getRandomValues(new Uint32Array(1))[0].toString(36);
+    } catch {
+      randomPart = Math.random().toString(36).substring(2, 11);
+    }
+    const requestId = `ext_${userId}_${Date.now()}_${randomPart}`;
+    
+    return this.makeRequest<ChatMessageWithAgent>('/api/v1/external-api/send', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: userId,
+        message: message,
+        request_id: requestId,
         ...(response && { response }),
         ...(agentId && { agent_id: agentId })
       }),
@@ -400,59 +439,11 @@ class ApiService {
   }
 
   // ============================================================================
-  // FILE PROCESSING METHODS
+  // FILE PROCESSING METHODS (Now handled by streamlined workflow)
   // ============================================================================
 
-  async uploadConversationFile(
-    fileContent: string, 
-    fileName: string, 
-    userId: number
-  ): Promise<ApiResponse<any>> {
-    console.log('📁 Uploading conversation file:', fileName, 'for user:', userId);
-    
-    try {
-      // Create a FormData object
-      const formData = new FormData();
-      
-      // Create a Blob from the file content
-      const blob = new Blob([fileContent], { type: 'text/plain' });
-      
-      // Append the file to FormData
-      formData.append('file', blob, fileName);
-      formData.append('user_id', userId.toString());
-      
-      // Make the request with FormData
-      const response = await fetch(`${this.baseUrl}/api/v1/file-processing/upload-conversation`, {
-        method: 'POST',
-        body: formData,
-        headers: {
-          // Don't set Content-Type header, let the browser set it with boundary
-        },
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
-      }
-      
-      const data = await response.json();
-      console.log('✅ File upload successful:', data);
-      
-      return {
-        data,
-        error: null,
-        status: response.status
-      };
-      
-    } catch (error) {
-      console.error('❌ File upload failed:', error);
-      return {
-        data: null,
-        error: error instanceof Error ? error.message : 'File upload failed',
-        status: 500
-      };
-    }
-  }
+  // Note: File uploads are now handled through the regular sendMessage method
+  // The streamlined workflow automatically detects file content and processes it
 
   async getChatStatistics(userId: number): Promise<ApiResponse<ChatStatisticsResponse>> {
     console.log('📊 Getting chat statistics for user:', userId);

@@ -123,7 +123,6 @@ export const DEBUG_CONFIG = {
   enableErrorLogs: true,
   enablePerformanceLogs: __DEV__,
 } as const;
-
 // ============================================================================
 // PERFORMANCE CONFIGURATION
 // ============================================================================
@@ -134,3 +133,4 @@ export const PERFORMANCE_CONFIG = {
   retryBackoffMultiplier: 1.5,
   maxRetryBackoff: 10000,
 } as const;
+

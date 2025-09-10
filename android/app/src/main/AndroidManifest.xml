@@ -30,6 +30,7 @@
         <category android:name="android.intent.category.BROWSABLE"/>
         <data android:scheme="chatapp"/>
         <data android:scheme="exp+chatapp"/>
+        <data android:scheme="exp+chat-bot-ai"/>
       </intent-filter>
     </activity>
   </application>

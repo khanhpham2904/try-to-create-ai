@@ -15,7 +15,7 @@ import {
   Animated,
   Dimensions,
   Modal,
-} from 'react-native';
+         } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { useAuth } from '../components/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
@@ -60,6 +60,20 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
   const [showFileModal, setShowFileModal] = useState(false);
   const [fileModalContent, setFileModalContent] = useState('');
   const [fileModalName, setFileModalName] = useState('');
+  const [messageRefreshKey, setMessageRefreshKey] = useState(0);
+  const [scrollPosition, setScrollPosition] = useState(0);
+  const [shouldPreserveScroll, setShouldPreserveScroll] = useState(false);
+  const [isRestoringScroll, setIsRestoringScroll] = useState(false);
+
+  // Function to force message refresh
+  const forceMessageRefresh = () => {
+    setMessageRefreshKey(prev => prev + 1);
+    // Preserve scroll position during refresh
+    setShouldPreserveScroll(true);
+    setTimeout(() => {
+      setMessages(prev => [...prev]);
+    }, 50);
+  };
 
   useEffect(() => {
     if (user) {
@@ -120,6 +134,39 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
       console.log(`📱 Message ${index}:`, { id: msg.id, response: msg.response?.substring(0, 50) });
     });
   }, [messages]);
+
+  // Handle scroll position restoration when messages change
+  useEffect(() => {
+    if (shouldPreserveScroll && scrollPosition > 0 && messages.length > 0 && !isRestoringScroll) {
+      console.log('📱 useEffect: Restoring scroll position to:', scrollPosition);
+      setIsRestoringScroll(true);
+      
+      // Use multiple attempts to ensure scroll restoration works
+      const restoreScroll = () => {
+        setTimeout(() => {
+          if (flatListRef.current) {
+            flatListRef.current.scrollToOffset({ offset: scrollPosition, animated: false });
+            console.log('📱 Scroll restoration attempted');
+          }
+        }, 50);
+        
+        setTimeout(() => {
+          if (flatListRef.current) {
+            flatListRef.current.scrollToOffset({ offset: scrollPosition, animated: false });
+            console.log('📱 Scroll restoration retry');
+          }
+        }, 150);
+        
+        setTimeout(() => {
+          setShouldPreserveScroll(false);
+          setIsRestoringScroll(false);
+          console.log('📱 Scroll restoration completed');
+        }, 200);
+      };
+      
+      restoreScroll();
+    }
+  }, [messages, shouldPreserveScroll, scrollPosition, isRestoringScroll]);
 
   // Load messages when selectedAgent changes
   useEffect(() => {
@@ -208,10 +255,18 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
         console.log('📜 Processed and sorted messages:', sortedMessages);
         setMessages(sortedMessages);
         
-        // Scroll to top when switching agents to show the new conversation
-        setTimeout(() => {
-          flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
-        }, 100);
+        // Only scroll to top when switching agents, not on refresh
+        if (selectedAgent && !shouldPreserveScroll) {
+          console.log('📜 Switching agents - scrolling to top');
+          setTimeout(() => {
+            flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+          }, 100);
+        } else if (shouldPreserveScroll) {
+          console.log('📜 Preserving scroll position during refresh');
+          // Scroll position will be restored by onContentSizeChange/onLayout
+        } else {
+          console.log('📜 No special scroll behavior needed');
+        }
       } else {
         console.log('📜 No messages found or invalid response format');
         setMessages([]);
@@ -366,6 +421,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
           response: response.data.response || 'No response received', // AI response with fallback
           user_id: Number(user.id), // Same user_id but with response
           created_at: response.data.created_at || new Date().toISOString(), // Fallback timestamp
+          agent_id: response.data.agent_id || selectedAgent?.id, // Include agent ID
         };
         
         console.log('💬 Created AI message:', aiMessage);
@@ -398,15 +454,25 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
           
           console.log('🔄 Messages after filter:', filteredMessages.length);
           console.log('🔄 Adding AI message:', aiMessage.id, aiMessage.response);
-          const newMessages = [...filteredMessages, aiMessage];
+          
+          // Create new array with proper structure to ensure React re-renders
+          const newMessages = [...filteredMessages];
+          newMessages.push(aiMessage);
+          
           console.log('🔄 Final messages array:', newMessages.map(m => ({ id: m.id, response: m.response })));
           
-          // Force a re-render by ensuring the array is new
-          return [...newMessages];
+          // Force a re-render by ensuring the array is completely new
+          return newMessages;
         });
         
+        // Force immediate UI refresh
+        forceMessageRefresh();
+        
+        // No need for additional refresh since message is already in local state
+        console.log('✅ Message handling completed without server refresh');
+        
         // Scroll to the bottom to show the AI response with a longer delay for longer responses
-        const scrollDelay = response.data.response.length > 1000 ? 300 : 100;
+        const scrollDelay = response.data.response.length > 1000 ? 500 : 300;
         setTimeout(() => {
           flatListRef.current?.scrollToEnd({ animated: true });
         }, scrollDelay);
@@ -435,8 +501,10 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
               !msg.response || !msg.response.includes(typingMessagePattern)
             );
           });
-          // Don't show alert for duplicate messages
+          // Don't show alert for duplicate messages - just silently handle it
           clearTimeout(typingTimeout);
+          setIsSending(false);
+          isSendingRef.current = false;
           return;
         } else if (status === 429) {
           errorMessage = language === 'vi' ? 'Gửi tin nhắn quá nhanh, vui lòng đợi một chút' : 'Sending messages too quickly, please wait a moment';
@@ -627,7 +695,22 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     }
   };
 
-  const sendMessageWithContent = async (messageText: string) => {
+  const isFileContent = (message: string): boolean => {
+    // Simple file detection logic
+    const lines = message.split('\n');
+    if (lines.length < 3) return false;
+    
+    // Check for conversation patterns (A: B: format)
+    const conversationPatterns = lines.filter(line => 
+      line.trim().match(/^[A-Z]:\s*.+/) || 
+      line.trim().match(/^[A-Z][a-z]+:\s*.+/)
+    );
+    
+    // If more than 50% of lines match conversation patterns, it's likely a file
+    return conversationPatterns.length > lines.length * 0.5;
+  };
+
+  const sendMessageWithContent = async (messageText: string, fileName?: string) => {
     // Use ref-based check to prevent race conditions
     if (!user || !messageText.trim() || isSendingRef.current) {
       console.log('🚫 Message send blocked:', {
@@ -660,6 +743,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
       response: '', // No response for user messages
       user_id: Number(user.id),
       created_at: new Date().toISOString(),
+      fileName: fileName, // Add fileName to the message
     };
 
     // Store the typing message ID for later removal
@@ -667,10 +751,12 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
 
     // Add user message immediately for real-time experience
     console.log('💬 Adding user message to chat:', userMessage);
+    console.log('💬 User message fileName:', userMessage.fileName);
     setMessages(prev => {
       const newMessages = [...prev, userMessage];
       console.log('💬 Updated messages count:', newMessages.length);
       console.log('💬 Last message:', newMessages[newMessages.length - 1]);
+      console.log('💬 Last message fileName:', newMessages[newMessages.length - 1].fileName);
       return newMessages;
     });
     
@@ -698,12 +784,28 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
       const healthCheck = await apiService.testConnection();
       console.log('🔍 Health check result:', healthCheck);
       
-      const response = await apiService.sendMessage(
-        Number(user.id), 
-        messageText.trim(), 
-        undefined, 
-        selectedAgent?.id
-      );
+      // Check if this is file content and use external API
+      const isFile = isFileContent(messageText.trim());
+      console.log('📁 Is file content:', isFile);
+      
+      let response;
+      if (isFile) {
+        console.log('🌐 Using external API for file upload...');
+        response = await apiService.sendMessageExternalAPI(
+          Number(user.id), 
+          messageText.trim(), 
+          undefined, 
+          selectedAgent?.id
+        );
+      } else {
+        console.log('💬 Using regular chat endpoint...');
+        response = await apiService.sendMessage(
+          Number(user.id), 
+          messageText.trim(), 
+          undefined, 
+          selectedAgent?.id
+        );
+      }
       console.log('💬 ChatScreen: Message response:', response);
       console.log('💬 Response status:', response.status);
       console.log('💬 Response error:', response.error);
@@ -732,7 +834,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
           return filteredMessages;
         });
         
-        // Add the actual response message
+        // Add the actual response message immediately for better UX
         const responseMessage: ChatMessage = {
           id: response.data.id || Date.now(),
           message: response.data.message || '',
@@ -745,10 +847,14 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
         setMessages(prev => {
           const newMessages = [...prev, responseMessage];
           console.log('💬 Final messages count:', newMessages.length);
-          console.log('💬 All messages:', newMessages.map(m => ({ id: m.id, message: m.message.substring(0, 50), response: m.response.substring(0, 50) })));
           return newMessages;
         });
+        
         console.log('✅ Message sent and response received successfully');
+        
+        // No need to refresh messages from server since we already have the response
+        // The message is already added to local state, so no refresh needed
+        console.log('✅ Message handling completed without server refresh');
       } else {
         console.error('❌ No response data received');
         throw new Error('No response data from server');
@@ -778,7 +884,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     }
   };
 
-  const processFileContent = async (content: string) => {
+  const processFileContent = async (content: string, fileName?: string) => {
     console.log('📁 processFileContent called with content length:', content.length);
     console.log('📁 Current inputMessage:', inputMessage);
     console.log('📁 User status:', { user: !!user, userId: user?.id });
@@ -815,59 +921,25 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     
     // Automatically send the message
     console.log('📁 Calling sendMessageWithContent...');
-    await sendMessageWithContent(messageText);
+    await sendMessageWithContent(messageText, fileName);
     console.log('📁 sendMessageWithContent completed');
   };
 
   const handleUploadToBackend = async (content: string, fileName: string) => {
     try {
-      console.log('📁 Uploading file to backend for processing...');
+      console.log('📁 Processing file with streamlined workflow...');
       
-      const response = await apiService.uploadConversationFile(
-        content, 
-        fileName, 
-        Number(user?.id)
-      );
+      // Use the streamlined workflow by sending content as a regular message
+      // The backend will automatically detect it as file content and process it
+      await sendMessageWithContent(content, fileName);
       
-      if (response.error) {
-        console.error('❌ Upload failed:', response.error);
-        Alert.alert(
-          language === 'vi' ? 'Lỗi' : 'Error',
-          language === 'vi' ? 'Không thể tải lên tệp' : 'Failed to upload file'
-        );
-        return;
-      }
-      
-      if (response.data) {
-        console.log('✅ Upload successful:', response.data);
-        
-        const productsFound = response.data.total_products_found || 0;
-        const productsAdded = response.data.total_products_added || 0;
-        
-        // Also send the content to chat conversation
-        console.log('📁 Sending uploaded content to chat conversation...');
-        await processFileContent(content);
-        
-        // Show success message after sending to chat
-        Alert.alert(
-          language === 'vi' ? 'Tải lên thành công' : 'Upload Successful',
-          language === 'vi' 
-            ? `Tìm thấy ${productsFound} sản phẩm và đã thêm ${productsAdded} vào dataset. Nội dung đã được gửi vào cuộc trò chuyện.`
-            : `Found ${productsFound} products and added ${productsAdded} to dataset. Content has been sent to the conversation.`,
-          [
-            {
-              text: language === 'vi' ? 'OK' : 'OK',
-              style: 'default'
-            }
-          ]
-        );
-      }
+      console.log('✅ File processed with streamlined workflow');
       
     } catch (error) {
-      console.error('❌ Upload error:', error);
+      console.error('❌ File processing error:', error);
       Alert.alert(
         language === 'vi' ? 'Lỗi' : 'Error',
-        language === 'vi' ? 'Không thể tải lên tệp' : 'Failed to upload file'
+        language === 'vi' ? 'Không thể xử lý tệp' : 'Failed to process file'
       );
     }
   };
@@ -987,6 +1059,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     console.log('🎨 User ID:', user?.id, 'Message user_id:', message.user_id);
     console.log('🎨 Message content:', message.message);
     console.log('🎨 Response content:', message.response);
+    console.log('🎨 Message fileName:', message.fileName);
     
     // Check if this message has user content (message field)
     const hasUserContent = message.message && message.message.trim() !== '';
@@ -995,6 +1068,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     
     console.log('🎨 Has user content:', hasUserContent);
     console.log('🎨 Has AI response:', hasAIResponse);
+    console.log('🎨 Has fileName:', !!message.fileName);
     
     // If message has both user content and AI response, render them separately
     if (hasUserContent && hasAIResponse) {
@@ -1004,9 +1078,29 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
           {/* User Message (Right Side) */}
           <View style={[styles.messageRow, styles.userMessageRow]}>
             <View style={[styles.messageBubble, styles.userMessageBubble, { backgroundColor: theme.colors.primary }]}>
-              <Text style={[styles.messageText, { color: theme.colors.surface }]}>
-                {message.message}
-              </Text>
+              {message.fileName ? (
+                // File attachment display
+                console.log('🎨 Rendering file attachment for:', message.fileName),
+                <View style={styles.fileAttachment}>
+                  <View style={styles.fileIconContainer}>
+                    <Icon name="description" size={24} color={theme.colors.surface} />
+                  </View>
+                  <View style={styles.fileInfo}>
+                    <Text style={[styles.fileName, { color: theme.colors.surface }]}>
+                      {message.fileName}
+                    </Text>
+                    <Text style={[styles.fileSize, { color: theme.colors.surface + '80' }]}>
+                      {Math.round(message.message.length / 1024 * 100) / 100} KB
+                    </Text>
+                  </View>
+                </View>
+              ) : (
+                // Regular text message
+                console.log('🎨 Rendering regular text message'),
+                <Text style={[styles.messageText, { color: theme.colors.surface }]}>
+                  {message.message}
+                </Text>
+              )}
               <Text style={[styles.messageTimestamp, { color: theme.colors.surface + '80' }]}>
                 {formatTime(message.created_at)}
               </Text>
@@ -1046,9 +1140,29 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
       return (
         <View key={message.id} style={[styles.messageRow, styles.userMessageRow]}>
           <View style={[styles.messageBubble, styles.userMessageBubble, { backgroundColor: theme.colors.primary }]}>
-            <Text style={[styles.messageText, { color: theme.colors.surface }]}>
-              {message.message}
-            </Text>
+            {message.fileName ? (
+              // File attachment display
+              console.log('🎨 Rendering file attachment for (user only):', message.fileName),
+              <View style={styles.fileAttachment}>
+                <View style={styles.fileIconContainer}>
+                  <Icon name="description" size={24} color={theme.colors.surface} />
+                </View>
+                <View style={styles.fileInfo}>
+                  <Text style={[styles.fileName, { color: theme.colors.surface }]}>
+                    {message.fileName}
+                  </Text>
+                  <Text style={[styles.fileSize, { color: theme.colors.surface + '80' }]}>
+                    {Math.round(message.message.length / 1024 * 100) / 100} KB
+                  </Text>
+                </View>
+              </View>
+            ) : (
+              // Regular text message
+              console.log('🎨 Rendering regular text message (user only)'),
+              <Text style={[styles.messageText, { color: theme.colors.surface }]}>
+                {message.message}
+              </Text>
+            )}
             <Text style={[styles.messageTimestamp, { color: theme.colors.surface + '80' }]}>
               {formatTime(message.created_at)}
             </Text>
@@ -1125,43 +1239,29 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
         </View>
         
         <View style={styles.headerButtons}>
-          {!isInChat && (
-            <TouchableOpacity 
-              style={[
-                styles.agentButton, 
-                { 
-                  backgroundColor: theme.colors.primary + '20',
-                  borderColor: theme.colors.primary + '40',
-                  borderWidth: 1,
-                }
-              ]}
-              onPress={handleCreateNewChat}
-            >
-              <Icon 
-                name="add" 
-                size={20} 
-                color={theme.colors.primary} 
-              />
-            </TouchableOpacity>
-          )}
           
           {isInChat && (
             <TouchableOpacity 
               style={[
-                styles.agentButton, 
+                styles.agentProfileButton, 
                 { 
-                  backgroundColor: selectedAgent ? theme.colors.primary + '20' : theme.colors.card,
-                  borderColor: selectedAgent ? theme.colors.primary + '40' : theme.colors.border,
-                  borderWidth: 1,
+                  backgroundColor: selectedAgent ? theme.colors.primary : theme.colors.surface,
+                  borderColor: selectedAgent ? theme.colors.primary : theme.colors.border,
                 }
               ]}
               onPress={() => setShowAgentSelector(true)}
+              activeOpacity={0.8}
             >
-              <Icon 
-                name="person" 
-                size={20} 
-                color={selectedAgent ? theme.colors.primary : theme.colors.textSecondary} 
-              />
+              <View style={[
+                styles.agentProfileAvatar, 
+                { backgroundColor: selectedAgent ? theme.colors.surface : theme.colors.primary + '20' }
+              ]}>
+                <Icon 
+                  name="smart-toy" 
+                  size={18} 
+                  color={selectedAgent ? theme.colors.primary : theme.colors.primary} 
+                />
+              </View>
             </TouchableOpacity>
           )}
           
@@ -1215,17 +1315,6 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
             </View>
           </View>
         </TouchableOpacity>
-        
-        {/* Edit Button */}
-        {agent && (
-          <TouchableOpacity
-            onPress={() => handleEditAgent(agent)}
-            style={[styles.editAgentButton, { backgroundColor: theme.colors.primary + '20' }]}
-            activeOpacity={0.7}
-          >
-            <Icon name="edit" size={16} color={theme.colors.primary} />
-          </TouchableOpacity>
-        )}
       </View>
     );
   };
@@ -1319,7 +1408,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
           <FlatList
             ref={flatListRef}
             data={messages}
-            key={`messages-${messages.length}-${Date.now()}`} // Force re-render when messages change
+            key={`messages-${messages.length}-${messageRefreshKey}`} // Force re-render when messages change
             renderItem={({ item, index }) => {
               console.log('📱 FlatList rendering item:', item, 'at index:', index);
               return renderMessage(item, index);
@@ -1332,18 +1421,53 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
             showsVerticalScrollIndicator={false}
             onContentSizeChange={() => {
               console.log('📱 FlatList content size changed, messages length:', messages.length);
-              // Auto-scroll to bottom when content changes
-              if (messages.length > 0) {
+              console.log('📱 Should preserve scroll:', shouldPreserveScroll, 'Scroll position:', scrollPosition);
+              
+              // Restore scroll position if we're preserving it and not already restoring
+              if (shouldPreserveScroll && scrollPosition > 0 && !isRestoringScroll) {
+                console.log('📱 Restoring scroll position to:', scrollPosition);
+                setIsRestoringScroll(true);
+                setTimeout(() => {
+                  flatListRef.current?.scrollToOffset({ offset: scrollPosition, animated: false });
+                  setShouldPreserveScroll(false);
+                  setIsRestoringScroll(false);
+                  console.log('📱 Scroll position restored');
+                }, 100); // Increased delay for better reliability
+              } else if (!shouldPreserveScroll && messages.length > 0) {
+                // Auto-scroll to bottom when content changes (new messages)
+                console.log('📱 Auto-scrolling to bottom');
                 flatListRef.current?.scrollToEnd({ animated: false });
               }
             }}
             onLayout={() => {
               console.log('📱 FlatList layout changed, messages length:', messages.length);
-              // Auto-scroll to bottom on layout
-              if (messages.length > 0) {
+              console.log('📱 Should preserve scroll:', shouldPreserveScroll, 'Scroll position:', scrollPosition);
+              
+              // Restore scroll position if we're preserving it and not already restoring
+              if (shouldPreserveScroll && scrollPosition > 0 && !isRestoringScroll) {
+                console.log('📱 Restoring scroll position to:', scrollPosition);
+                setIsRestoringScroll(true);
+                setTimeout(() => {
+                  flatListRef.current?.scrollToOffset({ offset: scrollPosition, animated: false });
+                  setShouldPreserveScroll(false);
+                  setIsRestoringScroll(false);
+                  console.log('📱 Scroll position restored');
+                }, 100); // Increased delay for better reliability
+              } else if (!shouldPreserveScroll && messages.length > 0) {
+                // Auto-scroll to bottom on layout (new messages)
+                console.log('📱 Auto-scrolling to bottom');
                 flatListRef.current?.scrollToEnd({ animated: false });
               }
             }}
+            onScroll={(event) => {
+              // Track scroll position for preservation (only if not restoring)
+              if (!isRestoringScroll) {
+                const currentOffset = event.nativeEvent.contentOffset.y;
+                setScrollPosition(currentOffset);
+                console.log('📱 Scroll position updated:', currentOffset);
+              }
+            }}
+            scrollEventThrottle={16}
             ListEmptyComponent={() => {
               console.log('📱 FlatList showing empty state, messages length:', messages.length);
               return renderEmptyState();
@@ -1485,25 +1609,13 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
               <TouchableOpacity
                 style={[styles.modalButton, styles.modalPrimaryButton, { backgroundColor: theme.colors.primary }]}
                 onPress={() => {
-                  console.log('📁 User chose: Send as Message');
-                  setShowFileModal(false);
-                  processFileContent(fileModalContent);
-                }}
-              >
-                <Text style={[styles.modalButtonText, { color: theme.colors.surface }]}>
-                  {language === 'vi' ? 'Gửi tin nhắn' : 'Send as Message'}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalSecondaryButton, { borderColor: theme.colors.primary }]}
-                onPress={() => {
                   console.log('📁 User chose: Upload for Processing');
                   setShowFileModal(false);
                   handleUploadToBackend(fileModalContent, fileModalName);
                 }}
               >
-                <Text style={[styles.modalButtonText, { color: theme.colors.primary }]}>
-                  {language === 'vi' ? 'Tải lên và gửi tin nhắn' : 'Upload & Send Message'}
+                <Text style={[styles.modalButtonText, { color: theme.colors.surface }]}>
+                  {language === 'vi' ? 'Phân tích AI' : 'AI Analysis'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -1618,6 +1730,30 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 2,
     elevation: 2,
+  },
+  agentProfileButton: {
+    padding: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  agentProfileAvatar: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   loadingIcon: {
     width: 64,
@@ -1798,19 +1934,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '400',
   },
-  editAgentButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginLeft: 12,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
   emptyState: {
     flex: 1,
     justifyContent: 'center',
@@ -1845,11 +1968,6 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 24,
     borderRadius: 12,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
   },
   selectAgentText: {
     color: 'white',
@@ -1989,6 +2107,34 @@ const styles = StyleSheet.create({
   modalButtonText: {
     fontSize: 16,
     fontWeight: '500',
+  },
+  // File attachment styles
+  fileAttachment: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  fileIconContainer: {
+    marginRight: 12,
+    padding: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 6,
+  },
+  fileInfo: {
+    flex: 1,
+  },
+  fileName: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  fileSize: {
+    fontSize: 12,
+    opacity: 0.8,
   },
 });
 

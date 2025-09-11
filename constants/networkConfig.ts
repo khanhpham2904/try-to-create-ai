@@ -26,7 +26,7 @@ export interface AndroidHeaders {
 // ============================================================================
 
 export const getNetworkConfig = (): NetworkConfig => ({
-  timeout: Platform.OS === 'android' ? 45000 : 10000,
+  timeout: Platform.OS === 'android' ? 120000 : 60000, // Increased: 2min Android, 1min others
   retryAttempts: Platform.OS === 'android' ? 3 : 2,
   retryDelay: Platform.OS === 'android' ? 1000 : 1000,
   reconnectDelayMax: 5000,

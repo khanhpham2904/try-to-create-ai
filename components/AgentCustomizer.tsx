@@ -114,7 +114,7 @@ const AgentCustomizer: React.FC<AgentCustomizerProps> = ({
             onAgentCreated?.(response.data);
             Alert.alert(
               'Success', 
-              'Default agent customized! A new custom agent has been created based on your changes.'
+              'Default agent customized! A new custom agent has been created based on your changes. All your previous conversations have been migrated to the new agent.'
             );
           } else {
             // Regular update

@@ -292,6 +292,57 @@ class ApiService {
     }
   }
 
+  private async makeSingleRequestWithTimeout<T>(
+    url: string,
+    endpoint: string,
+    options: RequestInit = {},
+    customTimeout: number
+  ): Promise<ApiResponse<T>> {
+    try {
+      const fullUrl = `${url}${endpoint}`;
+      console.log(`🌐 Trying URL with custom timeout (${customTimeout}ms): ${fullUrl}`);
+
+      const response = await NetworkUtils.fetchWithTimeout(
+        fullUrl, 
+        options, 
+        customTimeout
+      );
+
+      const data = await response.json().catch(() => ({}));
+
+      if (response.ok) {
+        this.workingUrl = url;
+        console.log(`✅ Success for: ${fullUrl}`);
+        return { data, status: response.status };
+      } else {
+        console.log(`❌ HTTP Error for: ${fullUrl} - Status: ${response.status}`);
+        
+        // Handle specific error cases
+        if (response.status === 409) {
+          return {
+            error: 'Duplicate message detected - this message was already sent',
+            status: response.status,
+          };
+        }
+        
+        if (response.status === 429) {
+          return {
+            error: 'Too many messages sent too quickly - please wait a moment',
+            status: response.status,
+          };
+        }
+        
+        return {
+          error: data.detail || `HTTP ${response.status}`,
+          status: response.status,
+        };
+      }
+    } catch (error) {
+      console.error(`❌ Network error for ${url}${endpoint}:`, error);
+      return NetworkUtils.createErrorResponse(error, endpoint);
+    }
+  }
+
   private async makeRequest<T>(
     endpoint: string,
     options: RequestInit = {}
@@ -308,6 +359,44 @@ class ApiService {
     for (const url of urlsToTry) {
       console.log(`🔄 Trying URL: ${url}`);
       const result = await this.makeSingleRequest<T>(url, endpoint, options);
+      
+      if (result.status !== 0) {
+        return result;
+      }
+    }
+
+    // All URLs failed - try offline mode
+    const offlineResponse = NetworkUtils.getOfflineResponse<T>(endpoint);
+    if (offlineResponse) {
+      console.log('🔄 Returning offline mode response');
+      return offlineResponse;
+    }
+
+    // Complete failure
+    console.log(`❌ All URLs failed for endpoint: ${endpoint}`);
+    return {
+      error: `${NETWORK_ERROR_MESSAGES.CONNECTION_FAILED} Endpoint: ${endpoint}`,
+      status: 0,
+    };
+  }
+
+  private async makeRequestWithCustomTimeout<T>(
+    endpoint: string,
+    options: RequestInit = {},
+    customTimeout: number
+  ): Promise<ApiResponse<T>> {
+    console.log(`🚀 Making API request with custom timeout (${customTimeout}ms) to: ${endpoint}`);
+    
+    // Try URLs in order: working URL, base URL, then fallbacks
+    const urlsToTry = [
+      ...(this.workingUrl ? [this.workingUrl] : []),
+      this.baseUrl,
+      ...FALLBACK_URLS.filter(url => url !== this.baseUrl)
+    ];
+
+    for (const url of urlsToTry) {
+      console.log(`🔄 Trying URL with custom timeout: ${url}`);
+      const result = await this.makeSingleRequestWithTimeout<T>(url, endpoint, options, customTimeout);
       
       if (result.status !== 0) {
         return result;
@@ -399,7 +488,10 @@ class ApiService {
     }
     const requestId = `ext_${userId}_${Date.now()}_${randomPart}`;
     
-    return this.makeRequest<ChatMessageWithAgent>('/api/v1/external-api/send', {
+    // Use extended timeout for file uploads (2 minutes)
+    const fileUploadTimeout = 120000; // 2 minutes
+    
+    return this.makeRequestWithCustomTimeout<ChatMessageWithAgent>('/api/v1/external-api/send', {
       method: 'POST',
       body: JSON.stringify({
         user_id: userId,
@@ -408,7 +500,7 @@ class ApiService {
         ...(response && { response }),
         ...(agentId && { agent_id: agentId })
       }),
-    });
+    }, fileUploadTimeout);
   }
 
   async getUserMessages(
@@ -431,12 +523,6 @@ class ApiService {
     });
   }
 
-  async deleteAllMessages(userId: number): Promise<ApiResponse<void>> {
-    console.log('🗑️ Deleting all messages for user:', userId);
-    return this.makeRequest<void>(`/api/v1/chat/messages?user_id=${userId}`, {
-      method: 'DELETE'
-    });
-  }
 
   // ============================================================================
   // FILE PROCESSING METHODS (Now handled by streamlined workflow)
@@ -500,10 +586,17 @@ class ApiService {
     });
   }
 
-  async deleteAgent(agentId: number, userId: number): Promise<ApiResponse<void>> {
+  async deleteAgent(agentId: number, userId: number): Promise<ApiResponse<{message: string, agent_name: string, messages_deleted: number}>> {
     console.log('🤖 Deleting agent:', agentId, 'by user:', userId);
-    return this.makeRequest<void>(`/api/v1/agents/${agentId}?user_id=${userId}`, {
+    return this.makeRequest<{message: string, agent_name: string, messages_deleted: number}>(`/api/v1/agents/${agentId}?user_id=${userId}`, {
       method: 'DELETE',
+    });
+  }
+
+  async cleanupOrphanedConversations(userId: number): Promise<ApiResponse<{message: string, orphaned_count: number}>> {
+    console.log('🧹 Cleaning up orphaned conversations for user:', userId);
+    return this.makeRequest<{message: string, orphaned_count: number}>(`/api/v1/agents/cleanup-orphaned-conversations?user_id=${userId}`, {
+      method: 'POST',
     });
   }
 

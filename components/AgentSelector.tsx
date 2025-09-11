@@ -225,7 +225,7 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
     
     Alert.alert(
       'Delete Agent',
-      `Are you sure you want to delete "${agent.name}"? This action cannot be undone.`,
+      `Are you sure you want to delete "${agent.name}"?\n\nThis will permanently delete the agent and all related messages. This action cannot be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -234,7 +234,7 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
           onPress: async () => {
             try {
               const response = await apiService.deleteAgent(agent.id, userId!);
-              if (response.status === 204) {
+              if (response.status === 200 && response.data) {
                 // Remove agent from list
                 setAgents(prev => prev.filter(a => a.id !== agent.id));
                 // If this was the selected agent, clear selection
@@ -242,15 +242,22 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
                   onAgentSelect(null);
                   setContextSelectedAgent(null);
                 }
-                Alert.alert('Success', 'Agent deleted successfully!');
+                Alert.alert(
+                  'Success',
+                  `${response.data.message}\n\nAgent "${response.data.agent_name}" and ${response.data.messages_deleted} messages have been deleted.`
+                );
+                // Reload agents to get updated list
+                loadAgents();
               } else if (response.status === 403) {
                 Alert.alert('Error', response.error || 'You do not have permission to delete this agent.');
+              } else if (response.status === 404) {
+                Alert.alert('Error', 'Agent not found.');
               } else {
                 Alert.alert('Error', response.error || 'Failed to delete agent. Please try again.');
               }
             } catch (error) {
               console.error('Error deleting agent:', error);
-              Alert.alert('Error', 'Failed to delete agent. Please try again.');
+              Alert.alert('Error', 'Failed to delete agent. Please check your connection and try again.');
             }
           }
         }
@@ -572,19 +579,40 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
       fontWeight: '500',
     },
     editButton: {
-      width: 32,
-      height: 32,
-      borderRadius: 16,
-      backgroundColor: theme.colors.surface,
+      width: 48,
+      height: 48,
+      borderRadius: 24,
       justifyContent: 'center',
       alignItems: 'center',
-      borderWidth: 1,
-      borderColor: theme.colors.border + '60',
-      elevation: 2,
+      marginLeft: 12,
+      // Remove elevation for Android to avoid border-like shadow
+      elevation: 0,
+      // Use shadowColor/shadowOffset for iOS only
       shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.08,
-      shadowRadius: 4,
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.05,
+      shadowRadius: 2,
+      borderWidth: 0,
+      // Clean modern background
+      backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    },
+    deleteButton: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginLeft: 12,
+      // Remove elevation for Android to avoid border-like shadow
+      elevation: 0,
+      // Use shadowColor/shadowOffset for iOS only
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.05,
+      shadowRadius: 2,
+      borderWidth: 0,
+      // Clean modern background
+      backgroundColor: 'rgba(255, 255, 255, 0.95)',
     },
     deleteIndicator: {
       position: 'absolute',
@@ -729,22 +757,34 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
           {/* Edit Button - only show for editable agents */}
           {isEditable ? (
             <TouchableOpacity
-              style={styles.editButton}
+              style={[
+                styles.editButton,
+                { backgroundColor: 'rgba(13, 110, 253, 0.08)' }
+              ]}
               onPress={() => handleEditAgent(item)}
             >
-              <Icon name="edit" size={18} color={theme.colors.primary} />
+              <Icon name="edit" size={20} color="#0d6efd" />
             </TouchableOpacity>
           ) : (
-            <View style={[styles.editButton, { backgroundColor: theme.colors.border + '40' }]}>
-              <Icon name="lock" size={18} color={theme.colors.textSecondary} />
+            <View style={[
+              styles.editButton,
+              { backgroundColor: 'rgba(108, 117, 125, 0.08)' }
+            ]}>
+              <Icon name="lock" size={20} color="#6c757d" />
             </View>
           )}
           
-          {/* Delete indicator for custom agents only */}
+          {/* Delete Button - only show for user's own custom agents */}
           {!isDefaultAgent && isUserOwnAgent && (
-            <View style={[styles.deleteIndicator, { backgroundColor: theme.colors.error + '20' }]}>
-              <Icon name="delete" size={12} color={theme.colors.error} />
-            </View>
+            <TouchableOpacity
+              style={[
+                styles.deleteButton,
+                { backgroundColor: 'rgba(220, 53, 69, 0.08)' }
+              ]}
+              onPress={() => handleDeleteAgent(item)}
+            >
+              <Icon name="delete" size={20} color="#dc3545" />
+            </TouchableOpacity>
           )}
         </View>
 

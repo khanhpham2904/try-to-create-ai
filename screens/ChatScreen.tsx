@@ -49,6 +49,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
   const [chatHistory, setChatHistory] = useState<ChatMessageWithAgent[]>([]);
   const [allAgents, setAllAgents] = useState<Agent[]>([]);
   const [isInChat, setIsInChat] = useState(false);
+  const [isRefreshingConversations, setIsRefreshingConversations] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   // Add ref to track sending state to prevent race conditions
@@ -93,10 +94,21 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     React.useCallback(() => {
       if (user) {
         console.log('🔄 Screen focused, reloading data...');
-        loadChatHistory();
-        loadAllAgents();
+        
+        // If we're not in chat mode, refresh conversation list with loading indicator
+        if (!isInChat) {
+          console.log('🔄 Refreshing conversation list...');
+          setIsRefreshingConversations(true);
+          Promise.all([loadChatHistory(), loadAllAgents()]).finally(() => {
+            setIsRefreshingConversations(false);
+          });
+        } else {
+          // If in chat mode, just reload data without showing loading indicator
+          loadChatHistory();
+          loadAllAgents();
+        }
       }
-    }, [user])
+    }, [user, isInChat])
   );
 
   // Cleanup typing messages when switching agents or component unmounts
@@ -575,33 +587,6 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     );
   };
 
-  const clearAllMessages = async () => {
-    if (!user) return;
-
-    Alert.alert(
-      language === 'vi' ? 'Xóa Tất Cả' : 'Clear All Messages',
-      language === 'vi' ? 'Bạn có chắc chắn muốn xóa tất cả tin nhắn? Hành động này không thể hoàn tác.' : 'Are you sure you want to delete all messages? This action cannot be undone.',
-      [
-        { text: language === 'vi' ? 'Hủy' : 'Cancel', style: 'cancel' },
-        {
-          text: language === 'vi' ? 'Xóa' : 'Clear All',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await apiService.deleteAllMessages(Number(user.id));
-              setMessages([]);
-            } catch (error) {
-              console.error('Error clearing messages:', error);
-              Alert.alert(
-                language === 'vi' ? 'Lỗi' : 'Error', 
-                language === 'vi' ? 'Không thể xóa tin nhắn' : 'Failed to clear messages'
-              );
-            }
-          },
-        },
-      ]
-    );
-  };
 
   const handleImportTxt = async () => {
     console.log('📁 handleImportTxt called');
@@ -929,6 +914,16 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     try {
       console.log('📁 Processing file with streamlined workflow...');
       
+      // Show loading state for file processing
+      setMessages(prev => [...prev, {
+        id: Date.now(),
+        user_id: Number(user.id),
+        message: `📁 ${fileName}`,
+        response: language === 'vi' ? 'Đang xử lý tệp...' : 'Processing file...',
+        created_at: new Date().toISOString(),
+        fileName: fileName
+      }]);
+      
       // Use the streamlined workflow by sending content as a regular message
       // The backend will automatically detect it as file content and process it
       await sendMessageWithContent(content, fileName);
@@ -937,6 +932,14 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
       
     } catch (error) {
       console.error('❌ File processing error:', error);
+      
+      // Update the loading message with error
+      setMessages(prev => prev.map(msg => 
+        msg.fileName === fileName && msg.response.includes('Processing') 
+          ? { ...msg, response: language === 'vi' ? 'Lỗi xử lý tệp' : 'File processing error' }
+          : msg
+      ));
+      
       Alert.alert(
         language === 'vi' ? 'Lỗi' : 'Error',
         language === 'vi' ? 'Không thể xử lý tệp' : 'Failed to process file'
@@ -1012,14 +1015,65 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     }
   };
 
-  const handleBackToConversations = () => {
+  const handleBackToConversations = async () => {
     setIsInChat(false);
     setSelectedAgent(null);
     setMessages([]);
+    // Refresh conversation history when going back to show latest conversations
+    setIsRefreshingConversations(true);
+    try {
+      await Promise.all([loadChatHistory(), loadAllAgents()]);
+    } finally {
+      setIsRefreshingConversations(false);
+    }
   };
 
   const handleCreateNewChat = () => {
     setShowAgentSelector(true);
+  };
+
+  const handleCleanupOrphanedConversations = async () => {
+    if (!user) return;
+    
+    Alert.alert(
+      language === 'vi' ? 'Dọn dẹp cuộc trò chuyện' : 'Cleanup Conversations',
+      language === 'vi' 
+        ? 'Bạn có muốn dọn dẹp các cuộc trò chuyện không còn tồn tại? Điều này sẽ xóa các cuộc trò chuyện với các trợ lý đã bị xóa hoặc không còn truy cập được.'
+        : 'Do you want to cleanup conversations that no longer exist? This will remove conversations with agents that have been deleted or are no longer accessible.',
+      [
+        {
+          text: language === 'vi' ? 'Hủy' : 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: language === 'vi' ? 'Dọn dẹp' : 'Cleanup',
+          onPress: async () => {
+            try {
+              const response = await apiService.cleanupOrphanedConversations(Number(user.id));
+              if (response.status === 200 && response.data) {
+                Alert.alert(
+                  language === 'vi' ? 'Thành công' : 'Success',
+                  response.data.message
+                );
+                // Refresh conversation history
+                loadChatHistory();
+              } else {
+                Alert.alert(
+                  language === 'vi' ? 'Lỗi' : 'Error',
+                  response.error || (language === 'vi' ? 'Không thể dọn dẹp cuộc trò chuyện' : 'Failed to cleanup conversations')
+                );
+              }
+            } catch (error) {
+              console.error('Error cleaning up conversations:', error);
+              Alert.alert(
+                language === 'vi' ? 'Lỗi' : 'Error',
+                language === 'vi' ? 'Không thể dọn dẹp cuộc trò chuyện' : 'Failed to cleanup conversations'
+              );
+            }
+          }
+        }
+      ]
+    );
   };
 
   const handleAgentSelect = (agent: Agent | null) => {
@@ -1239,6 +1293,39 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
         </View>
         
         <View style={styles.headerButtons}>
+          {/* New Conversation Button - only show when not in chat */}
+          {!isInChat && (
+            <TouchableOpacity 
+              style={[
+                styles.newConversationButton,
+                { 
+                  backgroundColor: theme.colors.primary,
+                  borderColor: theme.colors.primary,
+                }
+              ]}
+              onPress={handleCreateNewChat}
+              activeOpacity={0.8}
+            >
+              <Icon name="add" size={20} color={theme.colors.surface} />
+              <Text style={[styles.newConversationText, { color: theme.colors.surface }]}>
+                {language === 'vi' ? 'Cuộc trò chuyện mới' : 'New Conversation'}
+              </Text>
+            </TouchableOpacity>
+          )}
+          
+          {/* Cleanup Button - only show when not in chat */}
+          {!isInChat && (
+            <TouchableOpacity 
+              style={[
+                styles.cleanupButton,
+                { backgroundColor: 'rgba(108, 117, 125, 0.08)' }
+              ]}
+              onPress={handleCleanupOrphanedConversations}
+              activeOpacity={0.7}
+            >
+              <Icon name="cleaning-services" size={20} color="#6c757d" />
+            </TouchableOpacity>
+          )}
           
           {isInChat && (
             <TouchableOpacity 
@@ -1265,17 +1352,6 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
             </TouchableOpacity>
           )}
           
-          {isInChat && messages.length > 0 && (
-            <TouchableOpacity 
-              onPress={clearAllMessages} 
-              style={[
-                styles.clearButton,
-                { backgroundColor: theme.colors.error + '10', borderColor: theme.colors.error + '30' }
-              ]}
-            >
-              <Icon name="clear-all" size={20} color={theme.colors.error} />
-            </TouchableOpacity>
-          )}
         </View>
       </View>
     </View>
@@ -1283,6 +1359,127 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
 
   const renderConversationItem = ({ item }: { item: { agentId: number; messages: ChatMessageWithAgent[]; latestMessage: ChatMessageWithAgent } }) => {
     const agent = allAgents.find(a => a.id === item.agentId);
+    const isUserOwnAgent = agent && agent.user_id && agent.user_id === user?.id;
+    const isDefaultAgent = agent && (!agent.user_id || agent.user_id === 0);
+    
+    // Debug logging
+    console.log('🔍 Conversation Item Debug:', {
+      agentId: item.agentId,
+      agentName: agent?.name,
+      agentUserId: agent?.user_id,
+      currentUserId: user?.id,
+      isUserOwnAgent,
+      isDefaultAgent
+    });
+    
+    const handleDeleteAgentFromConversation = async () => {
+      if (!agent || !user) return;
+      
+      if (isDefaultAgent) {
+        // For default agents, delete messages only
+        Alert.alert(
+          language === 'vi' ? 'Xóa Cuộc Trò Chuyện' : 'Delete Conversation',
+          language === 'vi' 
+            ? `Bạn có chắc chắn muốn xóa tất cả tin nhắn với "${agent.name}"?\n\nĐiều này sẽ xóa vĩnh viễn tất cả tin nhắn trong cuộc trò chuyện này. Agent sẽ vẫn tồn tại.`
+            : `Are you sure you want to delete all messages with "${agent.name}"?\n\nThis will permanently delete all messages in this conversation. The agent will remain available.`,
+          [
+            {
+              text: language === 'vi' ? 'Hủy' : 'Cancel',
+              style: 'cancel',
+            },
+            {
+              text: language === 'vi' ? 'Xóa Tin Nhắn' : 'Delete Messages',
+              style: 'destructive',
+              onPress: async () => {
+                try {
+                  // Delete all messages for this agent and user
+                  const messagesToDelete = chatHistory.filter(msg => msg.agent_id === agent.id);
+                  let deletedCount = 0;
+                  
+                  for (const message of messagesToDelete) {
+                    try {
+                      await apiService.deleteMessage(message.id, Number(user.id));
+                      deletedCount++;
+                    } catch (error) {
+                      console.error(`Error deleting message ${message.id}:`, error);
+                    }
+                  }
+                  
+                  Alert.alert(
+                    language === 'vi' ? 'Thành công' : 'Success',
+                    language === 'vi' 
+                      ? `Đã xóa ${deletedCount} tin nhắn với "${agent.name}"`
+                      : `Successfully deleted ${deletedCount} messages with "${agent.name}"`
+                  );
+                  
+                  // Refresh conversation history
+                  loadChatHistory();
+                } catch (error) {
+                  console.error('Error deleting messages:', error);
+                  Alert.alert(
+                    language === 'vi' ? 'Lỗi' : 'Error', 
+                    language === 'vi' ? 'Không thể xóa tin nhắn. Vui lòng thử lại' : 'Failed to delete messages. Please try again.'
+                  );
+                }
+              }
+            }
+          ]
+        );
+      } else {
+        // For custom agents, delete the agent and all messages
+        Alert.alert(
+          language === 'vi' ? 'Xóa Agent' : 'Delete Agent',
+          language === 'vi' 
+            ? `Bạn có chắc chắn muốn xóa "${agent.name}"?\n\nĐiều này sẽ xóa vĩnh viễn agent và tất cả tin nhắn liên quan. Hành động này không thể hoàn tác.`
+            : `Are you sure you want to delete "${agent.name}"?\n\nThis will permanently delete the agent and all related messages. This action cannot be undone.`,
+          [
+            {
+              text: language === 'vi' ? 'Hủy' : 'Cancel',
+              style: 'cancel',
+            },
+            {
+              text: language === 'vi' ? 'Xóa Agent' : 'Delete Agent',
+              style: 'destructive',
+              onPress: async () => {
+                try {
+                  const response = await apiService.deleteAgent(agent.id, Number(user.id));
+                  if (response.status === 200 && response.data) {
+                    Alert.alert(
+                      language === 'vi' ? 'Thành công' : 'Success',
+                      `${response.data.message}\n\n${language === 'vi' ? 'Agent' : 'Agent'} "${response.data.agent_name}" ${language === 'vi' ? 'và' : 'and'} ${response.data.messages_deleted} ${language === 'vi' ? 'tin nhắn đã được xóa' : 'messages have been deleted'}.`
+                    );
+                    // Refresh conversation history and agents list
+                    loadChatHistory();
+                    loadAllAgents();
+                  } else if (response.status === 403) {
+                    Alert.alert(
+                      language === 'vi' ? 'Lỗi' : 'Error', 
+                      response.error || (language === 'vi' ? 'Bạn không có quyền xóa agent này' : 'You do not have permission to delete this agent.')
+                    );
+                  } else if (response.status === 404) {
+                    Alert.alert(
+                      language === 'vi' ? 'Lỗi' : 'Error', 
+                      language === 'vi' ? 'Agent không tìm thấy' : 'Agent not found.'
+                    );
+                  } else {
+                    Alert.alert(
+                      language === 'vi' ? 'Lỗi' : 'Error', 
+                      response.error || (language === 'vi' ? 'Không thể xóa agent. Vui lòng thử lại' : 'Failed to delete agent. Please try again.')
+                    );
+                  }
+                } catch (error) {
+                  console.error('Error deleting agent:', error);
+                  Alert.alert(
+                    language === 'vi' ? 'Lỗi' : 'Error', 
+                    language === 'vi' ? 'Không thể xóa agent. Vui lòng kiểm tra kết nối và thử lại' : 'Failed to delete agent. Please check your connection and try again.'
+                  );
+                }
+              }
+            }
+          ]
+        );
+      }
+    };
     
     return (
       <View style={[styles.conversationItem, { backgroundColor: theme.colors.surface }]}>
@@ -1315,6 +1512,28 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
             </View>
           </View>
         </TouchableOpacity>
+        
+        {/* Clean Modern Delete Button */}
+        {agent && (
+          <TouchableOpacity 
+            style={[
+              styles.conversationDeleteButton, 
+              { 
+                backgroundColor: isDefaultAgent 
+                  ? 'rgba(108, 117, 125, 0.08)' // Subtle gray for default agents
+                  : 'rgba(220, 53, 69, 0.08)',   // Subtle red for custom agents
+              }
+            ]}
+            onPress={handleDeleteAgentFromConversation}
+            activeOpacity={0.7}
+          >
+            <Icon 
+              name={isDefaultAgent ? "clear-all" : "delete"} 
+              size={20} 
+              color={isDefaultAgent ? '#6c757d' : '#dc3545'} 
+            />
+          </TouchableOpacity>
+        )}
       </View>
     );
   };
@@ -1396,6 +1615,10 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
         onAgentCreated={(agent) => {
           setSelectedAgent(agent);
           setShowAgentSelector(false);
+          // Refresh conversation history to show migrated conversations
+          loadChatHistory();
+          // Refresh agents list to include the new custom agent
+          loadAllAgents();
         }}
         onAgentUpdated={handleAgentUpdated}
         editingAgent={editingAgent}
@@ -1573,6 +1796,15 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
           contentContainerStyle={styles.conversationsList}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={renderEmptyState}
+          refreshing={isRefreshingConversations}
+          onRefresh={async () => {
+            setIsRefreshingConversations(true);
+            try {
+              await Promise.all([loadChatHistory(), loadAllAgents()]);
+            } finally {
+              setIsRefreshingConversations(false);
+            }
+          }}
         />
       )}
       
@@ -1713,6 +1945,45 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  newConversationButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    borderWidth: 1,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  newConversationText: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 6,
+  },
+  cleanupButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
+    // Remove elevation for Android to avoid border-like shadow
+    elevation: 0,
+    // Use shadowColor/shadowOffset for iOS only
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    borderWidth: 0,
+    // Clean modern background
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
   },
   agentButton: {
     padding: 12,
@@ -1889,6 +2160,24 @@ const styles = StyleSheet.create({
   },
   conversationTouchable: {
     flex: 1,
+  },
+  conversationDeleteButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 16,
+    // Remove elevation for Android to avoid border-like shadow
+    elevation: 0,
+    // Use shadowColor/shadowOffset for iOS only
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    borderWidth: 0,
+    // Clean modern background
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
   },
   conversationHeader: {
     flexDirection: 'row',

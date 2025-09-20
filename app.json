@@ -15,7 +15,11 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.chatapp.mobile"
+      "bundleIdentifier": "com.chatapp.mobile",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "This app uses the microphone for speech-to-text functionality.",
+        "NSSpeechRecognitionUsageDescription": "This app uses speech recognition to convert your voice to text."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -26,7 +30,8 @@
       "package": "com.chatapp.mobile",
       "permissions": [
         "android.permission.INTERNET",
-        "android.permission.VIBRATE"
+        "android.permission.VIBRATE",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {

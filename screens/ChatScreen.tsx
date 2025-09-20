@@ -20,21 +20,24 @@ import { useTheme } from '../theme/ThemeContext';
 import { useAuth } from '../components/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 import { useAgent } from '../components/AgentContext';
-import { apiService, ChatMessage, Agent, ChatMessageWithAgent } from '../services/api';
+import { apiService, ChatMessage, Agent, ChatMessageWithAgent, Chatbox, ChatboxWithMessages } from '../services/api';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import AgentCustomizer from '../components/AgentCustomizer';
 import AgentSelector from '../components/AgentSelector';
 import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
+import { SpeechToTextButton } from '../components/SpeechToTextButton';
+import { SpeechDiagnostic } from '../components/SpeechDiagnostic';
 
 interface ChatScreenProps {
   navigation: any;
+  route?: any;
 }
 
 const { width } = Dimensions.get('window');
 
-const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
+const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
   const { theme } = useTheme();
   const { user } = useAuth();
   const { language } = useLanguage();
@@ -48,6 +51,8 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [chatHistory, setChatHistory] = useState<ChatMessageWithAgent[]>([]);
   const [allAgents, setAllAgents] = useState<Agent[]>([]);
+  const [allChatboxes, setAllChatboxes] = useState<Chatbox[]>([]);
+  const [selectedChatbox, setSelectedChatbox] = useState<Chatbox | null>(null);
   const [isInChat, setIsInChat] = useState(false);
   const [isRefreshingConversations, setIsRefreshingConversations] = useState(false);
   const flatListRef = useRef<FlatList>(null);
@@ -65,6 +70,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
   const [scrollPosition, setScrollPosition] = useState(0);
   const [shouldPreserveScroll, setShouldPreserveScroll] = useState(false);
   const [isRestoringScroll, setIsRestoringScroll] = useState(false);
+  const [showSpeechTest, setShowSpeechTest] = useState(false);
 
   // Function to force message refresh
   const forceMessageRefresh = () => {
@@ -80,6 +86,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     if (user) {
       loadChatHistory();
       loadAllAgents();
+      loadAllChatboxes();
       // Fade in animation
       Animated.timing(fadeAnim, {
         toValue: 1,
@@ -88,6 +95,24 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
       }).start();
     }
   }, [user]);
+
+  // Handle navigation parameters (chatboxId from HomeScreen)
+  useEffect(() => {
+    if (route?.params?.chatboxId && user) {
+      const chatboxId = route.params.chatboxId;
+      const chatbox = allChatboxes.find(c => c.id === chatboxId);
+      if (chatbox) {
+        setSelectedChatbox(chatbox);
+        setSelectedAgent(null);
+        setIsInChat(true);
+      }
+    } else if (route?.params && Object.keys(route.params).length === 0 && user) {
+      // General chat mode - no specific agent or chatbox
+      setSelectedChatbox(null);
+      setSelectedAgent(null);
+      setIsInChat(true);
+    }
+  }, [route?.params, user, allChatboxes]);
 
   // Reload messages when screen comes into focus (when rejoining app)
   useFocusEffect(
@@ -99,13 +124,14 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
         if (!isInChat) {
           console.log('🔄 Refreshing conversation list...');
           setIsRefreshingConversations(true);
-          Promise.all([loadChatHistory(), loadAllAgents()]).finally(() => {
+          Promise.all([loadChatHistory(), loadAllAgents(), loadAllChatboxes()]).finally(() => {
             setIsRefreshingConversations(false);
           });
         } else {
           // If in chat mode, just reload data without showing loading indicator
           loadChatHistory();
           loadAllAgents();
+          loadAllChatboxes();
         }
       }
     }, [user, isInChat])
@@ -180,18 +206,25 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     }
   }, [messages, shouldPreserveScroll, scrollPosition, isRestoringScroll]);
 
-  // Load messages when selectedAgent changes
+  // Load messages when selectedAgent or selectedChatbox changes
   useEffect(() => {
-    if (user && selectedAgent && isInChat) {
-      console.log('🔄 Selected agent changed, loading messages for:', selectedAgent.name, 'ID:', selectedAgent.id);
+    if (user && isInChat) {
+      if (selectedAgent) {
+        console.log('🔄 Selected agent changed, loading messages for:', selectedAgent.name, 'ID:', selectedAgent.id);
+      } else if (selectedChatbox) {
+        console.log('🔄 Selected chatbox changed, loading messages for:', selectedChatbox.title, 'ID:', selectedChatbox.id);
+      } else {
+        console.log('🔄 General chat mode - loading general messages');
+      }
       loadMessages();
     }
-  }, [selectedAgent?.id, user?.id, isInChat]); // Use selectedAgent.id instead of selectedAgent to prevent unnecessary re-renders
+  }, [selectedAgent?.id, selectedChatbox?.id, user?.id, isInChat]); // Use IDs instead of objects to prevent unnecessary re-renders
 
   const loadChatHistory = async () => {
     if (!user) return;
 
     try {
+      // Load ALL messages (both agent and chatbox messages) to build conversation list
       const response = await apiService.getUserMessages(Number(user.id), 0, 100);
       if (response.data?.messages) {
         setChatHistory(response.data.messages as ChatMessageWithAgent[]);
@@ -214,14 +247,22 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     }
   };
 
+  const loadAllChatboxes = async () => {
+    if (!user) return;
+
+    try {
+      const response = await apiService.getUserChatboxes(Number(user.id));
+      if (response.data) {
+        setAllChatboxes(response.data.chatboxes);
+      }
+    } catch (error) {
+      console.error('Error loading chatboxes:', error);
+    }
+  };
+
   const loadMessages = async () => {
     if (!user) {
       console.log('❌ Cannot load messages: No user');
-      return;
-    }
-    
-    if (!selectedAgent) {
-      console.log('❌ Cannot load messages: No selected agent');
       return;
     }
     
@@ -232,56 +273,128 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     
     setIsLoading(true);
     try {
-      console.log('📜 Loading messages for user:', user.id, 'with agent:', selectedAgent.id, 'name:', selectedAgent.name);
-      
-      // Add a small delay to show loading state when switching agents
       if (selectedAgent) {
+        console.log('📜 Loading messages for user:', user.id, 'with agent:', selectedAgent.id, 'name:', selectedAgent.name);
+        // Add a small delay to show loading state when switching agents
         await new Promise(resolve => setTimeout(resolve, 300));
-      }
-      
-      const response = await apiService.getUserMessages(Number(user.id), 0, 100, selectedAgent?.id);
-      console.log('📜 Messages response:', response);
-      
-      if (response.data && response.data.messages) {
-        console.log('📜 Found', response.data.messages.length, 'messages');
-        // Process messages to ensure proper format
-        let processedMessages = response.data.messages.map((msg: any) => ({
-          id: msg.id,
-          message: msg.message || '',
-          response: msg.response || '',
-          user_id: msg.user_id,
-          agent_id: msg.agent_id,
-          created_at: msg.created_at,
-        }));
         
-        // Backend already filters by agent, so no need to filter again
-        console.log('📜 Using', processedMessages.length, 'messages for agent:', selectedAgent?.name || 'all agents');
+        const response = await apiService.getUserMessages(Number(user.id), 0, 100, selectedAgent.id);
+        console.log('📜 Messages response:', response);
         
-        // Sort messages chronologically (oldest first, newest last)
-        const sortedMessages = processedMessages.sort((a, b) => {
-          const dateA = new Date(a.created_at).getTime();
-          const dateB = new Date(b.created_at).getTime();
-          return dateA - dateB; // Ascending order (oldest first)
-        });
-        
-        console.log('📜 Processed and sorted messages:', sortedMessages);
-        setMessages(sortedMessages);
-        
-        // Only scroll to top when switching agents, not on refresh
-        if (selectedAgent && !shouldPreserveScroll) {
-          console.log('📜 Switching agents - scrolling to top');
-          setTimeout(() => {
-            flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
-          }, 100);
-        } else if (shouldPreserveScroll) {
-          console.log('📜 Preserving scroll position during refresh');
-          // Scroll position will be restored by onContentSizeChange/onLayout
+        if (response.data && response.data.messages) {
+          console.log('📜 Found', response.data.messages.length, 'messages');
+          // Process messages to ensure proper format
+          let processedMessages = response.data.messages.map((msg: any) => ({
+            id: msg.id,
+            message: msg.message || '',
+            response: msg.response || '',
+            user_id: msg.user_id,
+            agent_id: msg.agent_id,
+            chatbox_id: msg.chatbox_id,
+            created_at: msg.created_at,
+          }));
+          
+          // Sort messages chronologically (oldest first, newest last)
+          const sortedMessages = processedMessages.sort((a, b) => {
+            const dateA = new Date(a.created_at).getTime();
+            const dateB = new Date(b.created_at).getTime();
+            return dateA - dateB; // Ascending order (oldest first)
+          });
+          
+          console.log('📜 Processed and sorted messages:', sortedMessages);
+          setMessages(sortedMessages);
         } else {
-          console.log('📜 No special scroll behavior needed');
+          console.log('📜 No messages found or invalid response format');
+          setMessages([]);
+        }
+      } else if (selectedChatbox) {
+        console.log('📜 Loading messages for user:', user.id, 'with chatbox:', selectedChatbox.id, 'title:', selectedChatbox.title);
+        // Add a small delay to show loading state when switching chatboxes
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        const response = await apiService.getChatboxWithMessages(selectedChatbox.id, Number(user.id), 0, 100);
+        console.log('📜 Chatbox messages response:', response);
+        
+        if (response.data && response.data.messages) {
+          console.log('📜 Found', response.data.messages.length, 'messages in chatbox');
+          // Process messages to ensure proper format
+          let processedMessages = response.data.messages.map((msg: any) => ({
+            id: msg.id,
+            message: msg.message || '',
+            response: msg.response || '',
+            user_id: msg.user_id,
+            agent_id: msg.agent_id,
+            chatbox_id: msg.chatbox_id,
+            created_at: msg.created_at,
+          }));
+          
+          // Sort messages chronologically (oldest first, newest last)
+          const sortedMessages = processedMessages.sort((a, b) => {
+            const dateA = new Date(a.created_at).getTime();
+            const dateB = new Date(b.created_at).getTime();
+            return dateA - dateB; // Ascending order (oldest first)
+          });
+          
+          console.log('📜 Processed and sorted chatbox messages:', sortedMessages);
+          setMessages(sortedMessages);
+        } else {
+          console.log('📜 No messages found in chatbox or invalid response format');
+          setMessages([]);
         }
       } else {
-        console.log('📜 No messages found or invalid response format');
-        setMessages([]);
+        // General chat mode - no specific agent or chatbox selected
+        console.log('📜 Loading general messages for user:', user.id, '(no specific agent or chatbox)');
+        // Add a small delay to show loading state
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        const response = await apiService.getUserMessages(Number(user.id), 0, 100);
+        console.log('📜 General messages response:', response);
+        
+        if (response.data && response.data.messages) {
+          // Filter for general messages (no agent_id and no chatbox_id)
+          const generalMessages = response.data.messages.filter((msg: any) => 
+            !msg.agent_id && !msg.chatbox_id
+          );
+          
+          console.log('📜 Found', generalMessages.length, 'general messages');
+          
+          // Process messages to ensure proper format
+          let processedMessages = generalMessages.map((msg: any) => ({
+            id: msg.id,
+            message: msg.message || '',
+            response: msg.response || '',
+            user_id: msg.user_id,
+            agent_id: msg.agent_id,
+            chatbox_id: msg.chatbox_id,
+            created_at: msg.created_at,
+          }));
+          
+          // Sort messages chronologically (oldest first, newest last)
+          const sortedMessages = processedMessages.sort((a, b) => {
+            const dateA = new Date(a.created_at).getTime();
+            const dateB = new Date(b.created_at).getTime();
+            return dateA - dateB; // Ascending order (oldest first)
+          });
+          
+          console.log('📜 Processed and sorted general messages:', sortedMessages);
+          setMessages(sortedMessages);
+        } else {
+          console.log('📜 No general messages found or invalid response format');
+          setMessages([]);
+        }
+      }
+      
+      // Only scroll to top when switching conversations, not on refresh
+      if (!shouldPreserveScroll) {
+        console.log('📜 Switching conversation - scrolling to top');
+        setTimeout(() => {
+          flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+        }, 100);
+      } else if (shouldPreserveScroll) {
+        console.log('📜 Preserving scroll position during refresh');
+        // Scroll position will be restored by onContentSizeChange/onLayout
+      } else {
+        console.log('📜 No special scroll behavior needed');
       }
     } catch (error) {
       console.error('Error loading messages:', error);
@@ -370,7 +483,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
       flatListRef.current?.scrollToEnd({ animated: true });
     }, 100);
 
-    console.log('💬 ChatScreen: Sending message with agent:', selectedAgent?.id);
+    console.log('💬 ChatScreen: Sending message with agent:', selectedAgent?.id, 'chatbox:', selectedChatbox?.id);
 
     try {
       // Test backend connection first
@@ -404,8 +517,8 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
           throw new Error('Empty response data from server');
         }
         
-        // Validate response structure
-        if (!response.data.id || !response.data.response) {
+        // Validate response structure with proper null checks
+        if (!response.data || !response.data.id || !response.data.response) {
           console.error('❌ Invalid response structure:', response.data);
           // Create a fallback response for debugging
           const fallbackMessage: ChatMessage = {
@@ -428,12 +541,12 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
         
         // Create separate AI message to show on the left (keep user message)
         const aiMessage: ChatMessage = {
-          id: response.data.id || Date.now() + 2, // Fallback ID if not provided
+          id: (response.data && response.data.id) || Date.now() + 2, // Fallback ID if not provided
           message: '', // Empty message field for AI
-          response: response.data.response || 'No response received', // AI response with fallback
+          response: (response.data && response.data.response) || 'No response received', // AI response with fallback
           user_id: Number(user.id), // Same user_id but with response
-          created_at: response.data.created_at || new Date().toISOString(), // Fallback timestamp
-          agent_id: response.data.agent_id || selectedAgent?.id, // Include agent ID
+          created_at: (response.data && response.data.created_at) || new Date().toISOString(), // Fallback timestamp
+          agent_id: (response.data && response.data.agent_id) || selectedAgent?.id, // Include agent ID
         };
         
         console.log('💬 Created AI message:', aiMessage);
@@ -484,13 +597,14 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
         console.log('✅ Message handling completed without server refresh');
         
         // Scroll to the bottom to show the AI response with a longer delay for longer responses
-        const scrollDelay = response.data.response.length > 1000 ? 500 : 300;
+        const responseLength = (response.data && response.data.response) ? response.data.response.length : 0;
+        const scrollDelay = responseLength > 1000 ? 500 : 300;
         setTimeout(() => {
           flatListRef.current?.scrollToEnd({ animated: true });
         }, scrollDelay);
         
         // Log response length for debugging
-        console.log(`💬 AI Response length: ${response.data.response.length} characters`);
+        console.log(`💬 AI Response length: ${responseLength} characters`);
       }
       
       // Clear the typing timeout since we got a response
@@ -557,6 +671,54 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
       setIsSending(false);
       isSendingRef.current = false; // Reset ref after sending
     }
+  };
+
+  const handleDeleteChatbox = async () => {
+    if (!selectedChatbox || !user) return;
+
+    Alert.alert(
+      language === 'vi' ? 'Xóa Cuộc Trò Chuyện' : 'Delete Conversation',
+      language === 'vi' 
+        ? `Bạn có chắc chắn muốn xóa cuộc trò chuyện "${selectedChatbox.title}"?\n\nĐiều này sẽ xóa vĩnh viễn tất cả tin nhắn trong cuộc trò chuyện này.`
+        : `Are you sure you want to delete the conversation "${selectedChatbox.title}"?\n\nThis will permanently delete all messages in this conversation.`,
+      [
+        {
+          text: language === 'vi' ? 'Hủy' : 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: language === 'vi' ? 'Xóa' : 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await apiService.deleteChatbox(selectedChatbox.id, Number(user.id));
+              
+              Alert.alert(
+                language === 'vi' ? 'Thành công' : 'Success',
+                language === 'vi' ? 'Cuộc trò chuyện đã được xóa' : 'Conversation deleted successfully'
+              );
+              
+              // Clear the current chatbox and go back to conversations
+              setSelectedChatbox(null);
+              setSelectedAgent(null);
+              setIsInChat(false);
+              setMessages([]);
+              
+              // Refresh data
+              loadChatHistory();
+              loadAllChatboxes();
+              
+            } catch (error) {
+              console.error('Error deleting chatbox:', error);
+              Alert.alert(
+                language === 'vi' ? 'Lỗi' : 'Error',
+                language === 'vi' ? 'Không thể xóa cuộc trò chuyện. Vui lòng thử lại' : 'Failed to delete conversation. Please try again'
+              );
+            }
+          },
+        },
+      ]
+    );
   };
 
   const deleteMessage = async (messageId: number) => {
@@ -680,6 +842,13 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     }
   };
 
+  const handleSpeechRecognized = (text: string) => {
+    console.log('🎤 Speech recognized:', text);
+    if (text && text.trim()) {
+      setInputMessage(text.trim());
+    }
+  };
+
   const isFileContent = (message: string): boolean => {
     // Simple file detection logic
     const lines = message.split('\n');
@@ -724,7 +893,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     // Add user message immediately for real-time experience
     const userMessage: ChatMessage = {
       id: Date.now(), // Temporary ID
-      message: messageText.trim(),
+      message: fileName ? `📁 ${fileName}` : messageText.trim(), // Show file name instead of full content
       response: '', // No response for user messages
       user_id: Number(user.id),
       created_at: new Date().toISOString(),
@@ -821,11 +990,11 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
         
         // Add the actual response message immediately for better UX
         const responseMessage: ChatMessage = {
-          id: response.data.id || Date.now(),
-          message: response.data.message || '',
-          response: response.data.response || '',
-          user_id: response.data.user_id || Number(user.id),
-          created_at: response.data.created_at || new Date().toISOString(),
+          id: (response.data && response.data.id) || Date.now(),
+          message: (response.data && response.data.message) || '',
+          response: (response.data && response.data.response) || '',
+          user_id: (response.data && response.data.user_id) || Number(user.id),
+          created_at: (response.data && response.data.created_at) || new Date().toISOString(),
         };
         
         console.log('💬 Adding response message to chat:', responseMessage);
@@ -914,15 +1083,8 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     try {
       console.log('📁 Processing file with streamlined workflow...');
       
-      // Show loading state for file processing
-      setMessages(prev => [...prev, {
-        id: Date.now(),
-        user_id: Number(user.id),
-        message: `📁 ${fileName}`,
-        response: language === 'vi' ? 'Đang xử lý tệp...' : 'Processing file...',
-        created_at: new Date().toISOString(),
-        fileName: fileName
-      }]);
+      // Don't add processing message here - let sendMessageWithContent handle the AI typing message
+      // This prevents duplicate messages (processing + AI typing)
       
       // Use the streamlined workflow by sending content as a regular message
       // The backend will automatically detect it as file content and process it
@@ -932,13 +1094,6 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
       
     } catch (error) {
       console.error('❌ File processing error:', error);
-      
-      // Update the loading message with error
-      setMessages(prev => prev.map(msg => 
-        msg.fileName === fileName && msg.response.includes('Processing') 
-          ? { ...msg, response: language === 'vi' ? 'Lỗi xử lý tệp' : 'File processing error' }
-          : msg
-      ));
       
       Alert.alert(
         language === 'vi' ? 'Lỗi' : 'Error',
@@ -978,10 +1133,14 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
   };
 
   const getConversationsByAgent = () => {
+    console.log('🔄 ChatScreen: getConversationsByAgent called');
+    console.log('🔄 ChatScreen: chatHistory length:', chatHistory.length);
+    
     const conversations: { [agentId: number]: ChatMessageWithAgent[] } = {};
     
     chatHistory.forEach(message => {
       if (message.agent_id) {
+        console.log('🔄 ChatScreen: Found agent message:', { id: message.id, agent_id: message.agent_id, message: message.message?.substring(0, 30) });
         if (!conversations[message.agent_id]) {
           conversations[message.agent_id] = [];
         }
@@ -989,14 +1148,87 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
       }
     });
 
+    console.log('🔄 ChatScreen: Agent conversations found:', Object.keys(conversations).length);
+    Object.keys(conversations).forEach(agentId => {
+      console.log('🔄 ChatScreen: Agent', agentId, 'has', conversations[parseInt(agentId)].length, 'messages');
+    });
+
     // Convert to array and sort by latest message
-    return Object.entries(conversations)
+    const result = Object.entries(conversations)
       .map(([agentId, messages]) => ({
         agentId: parseInt(agentId),
         messages: messages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
         latestMessage: messages[0] // Already sorted, so first is latest
       }))
       .sort((a, b) => new Date(b.latestMessage.created_at).getTime() - new Date(a.latestMessage.created_at).getTime());
+    
+    console.log('🔄 ChatScreen: Returning', result.length, 'agent conversations');
+    return result;
+  };
+
+  const getConversationsByChatbox = () => {
+    console.log('🔄 ChatScreen: getConversationsByChatbox called');
+    console.log('🔄 ChatScreen: chatHistory length:', chatHistory.length);
+    console.log('🔄 ChatScreen: allChatboxes length:', allChatboxes.length);
+    
+    const conversations: { [chatboxId: number]: ChatMessageWithAgent[] } = {};
+    
+    chatHistory.forEach(message => {
+      if (message.chatbox_id) {
+        console.log('🔄 ChatScreen: Found chatbox message:', { id: message.id, chatbox_id: message.chatbox_id, message: message.message?.substring(0, 30) });
+        if (!conversations[message.chatbox_id]) {
+          conversations[message.chatbox_id] = [];
+        }
+        conversations[message.chatbox_id].push(message);
+      }
+    });
+
+    console.log('🔄 ChatScreen: Chatbox conversations found:', Object.keys(conversations).length);
+    Object.keys(conversations).forEach(chatboxId => {
+      console.log('🔄 ChatScreen: Chatbox', chatboxId, 'has', conversations[parseInt(chatboxId)].length, 'messages');
+    });
+
+    // Convert to array and sort by latest message
+    const result = Object.entries(conversations)
+      .map(([chatboxId, messages]) => ({
+        chatboxId: parseInt(chatboxId),
+        messages: messages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+        latestMessage: messages[0] // Already sorted, so first is latest
+      }))
+      .sort((a, b) => new Date(b.latestMessage.created_at).getTime() - new Date(a.latestMessage.created_at).getTime());
+    
+    console.log('🔄 ChatScreen: Returning', result.length, 'chatbox conversations');
+    return result;
+  };
+
+  const getGeneralConversations = () => {
+    console.log('🔄 ChatScreen: getGeneralConversations called');
+    
+    // Get messages that have no agent_id and no chatbox_id (general chat)
+    const generalMessages = chatHistory.filter(message => 
+      !message.agent_id && !message.chatbox_id
+    );
+    
+    console.log('🔄 ChatScreen: Found', generalMessages.length, 'general messages');
+    
+    if (generalMessages.length === 0) {
+      return [];
+    }
+    
+    // Group all general messages into one conversation
+    const sortedMessages = generalMessages.sort((a, b) => 
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+    
+    // Create a fake chatbox ID for general conversations (use negative number to avoid conflicts)
+    const generalConversation = {
+      chatboxId: -1, // Special ID for general conversations
+      messages: sortedMessages,
+      latestMessage: sortedMessages[0]
+    };
+    
+    console.log('🔄 ChatScreen: Returning 1 general conversation with', sortedMessages.length, 'messages');
+    return [generalConversation];
   };
 
   const getAgentName = (agentId?: number) => {
@@ -1010,26 +1242,67 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     if (agent) {
       console.log('🔄 Conversation pressed for agent:', agent.name, 'ID:', agent.id);
       setSelectedAgent(agent);
+      setSelectedChatbox(null);
       setIsInChat(true);
       // loadMessages() will be called by useEffect when selectedAgent changes
+    }
+  };
+
+  const handleChatboxConversationPress = (chatboxId: number) => {
+    const chatbox = allChatboxes.find(c => c.id === chatboxId);
+    if (chatbox) {
+      console.log('🔄 Conversation pressed for chatbox:', chatbox.title, 'ID:', chatbox.id);
+      setSelectedChatbox(chatbox);
+      setSelectedAgent(null);
+      setIsInChat(true);
+      // loadMessages() will be called by useEffect when selectedChatbox changes
     }
   };
 
   const handleBackToConversations = async () => {
     setIsInChat(false);
     setSelectedAgent(null);
+    setSelectedChatbox(null);
     setMessages([]);
     // Refresh conversation history when going back to show latest conversations
     setIsRefreshingConversations(true);
     try {
-      await Promise.all([loadChatHistory(), loadAllAgents()]);
+      await Promise.all([loadChatHistory(), loadAllAgents(), loadAllChatboxes()]);
     } finally {
       setIsRefreshingConversations(false);
     }
   };
 
-  const handleCreateNewChat = () => {
-    setShowAgentSelector(true);
+  const handleCreateNewChat = async () => {
+    // Create a new chatbox for general chat
+    if (!user) return;
+    
+    try {
+      const response = await apiService.createChatbox({
+        user_id: Number(user.id),
+        title: "New Chat"
+      });
+      
+      if (response.data) {
+        setSelectedChatbox(response.data);
+        setSelectedAgent(null);
+        setIsInChat(true);
+        setMessages([]);
+        // Refresh chatboxes list
+        loadAllChatboxes();
+      } else {
+        Alert.alert(
+          language === 'vi' ? 'Lỗi' : 'Error',
+          language === 'vi' ? 'Không thể tạo cuộc trò chuyện mới' : 'Failed to create new conversation'
+        );
+      }
+    } catch (error) {
+      console.error('Error creating new chatbox:', error);
+      Alert.alert(
+        language === 'vi' ? 'Lỗi' : 'Error',
+        language === 'vi' ? 'Không thể tạo cuộc trò chuyện mới' : 'Failed to create new conversation'
+      );
+    }
   };
 
   const handleCleanupOrphanedConversations = async () => {
@@ -1179,10 +1452,22 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
               <Text style={[styles.messageText, { color: theme.colors.text }]}>
                 {message.response}
               </Text>
+              {/* Debug info - remove this after testing */}
+              {__DEV__ && (
+                <Text style={[styles.messageTimestamp, { color: theme.colors.textSecondary, fontSize: 10 }]}>
+                  Length: {message.response?.length || 0} chars
+                </Text>
+              )}
               <Text style={[styles.messageTimestamp, { color: theme.colors.textSecondary }]}>
                 {formatTime(message.created_at)}
               </Text>
             </View>
+            <TouchableOpacity
+              style={styles.deleteButton}
+              onPress={() => deleteMessage(message.id)}
+            >
+              <Icon name="delete-outline" size={16} color={theme.colors.error} />
+            </TouchableOpacity>
           </View>
         </View>
       );
@@ -1246,10 +1531,22 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
             <Text style={[styles.messageText, { color: theme.colors.text }]}>
               {message.response}
             </Text>
+            {/* Debug info - remove this after testing */}
+            {__DEV__ && (
+              <Text style={[styles.messageTimestamp, { color: theme.colors.textSecondary, fontSize: 10 }]}>
+                Length: {message.response?.length || 0} chars
+              </Text>
+            )}
             <Text style={[styles.messageTimestamp, { color: theme.colors.textSecondary }]}>
               {formatTime(message.created_at)}
             </Text>
           </View>
+          <TouchableOpacity
+            style={styles.deleteButton}
+            onPress={() => deleteMessage(message.id)}
+          >
+            <Icon name="delete-outline" size={16} color={theme.colors.error} />
+          </TouchableOpacity>
         </View>
       );
     }
@@ -1272,12 +1569,26 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
             </TouchableOpacity>
           )}
           <View style={[styles.headerAvatar, { backgroundColor: theme.colors.primary }]}>
-            <Icon name="smart-toy" size={24} color={theme.colors.surface} />
+            <Icon 
+              name={
+                selectedAgent 
+                  ? "smart-toy" 
+                  : selectedChatbox 
+                    ? "chat" 
+                    : "help"
+              } 
+              size={24} 
+              color={theme.colors.surface} 
+            />
           </View>
           <View style={styles.headerText}>
             <Text style={[styles.headerTitle, { color: theme.colors.text }]}>
               {isInChat 
-                ? (selectedAgent ? selectedAgent.name : (language === 'vi' ? 'Trợ Lý AI' : 'AI Assistant'))
+                ? (selectedAgent 
+                    ? selectedAgent.name 
+                    : selectedChatbox 
+                      ? selectedChatbox.title 
+                      : (language === 'vi' ? 'Chat Chung' : 'General Chat'))
                 : (language === 'vi' ? 'Cuộc Trò Chuyện' : 'Conversations')
               }
             </Text>
@@ -1285,7 +1596,9 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
               {isInChat 
                 ? (selectedAgent 
                     ? `${selectedAgent.personality} • ${language === 'vi' ? 'Cuộc trò chuyện riêng' : 'Private chat'}`
-                    : (language === 'vi' ? 'Chọn một trợ lý để bắt đầu' : 'Choose an assistant to get started'))
+                    : selectedChatbox
+                      ? `${language === 'vi' ? 'Cuộc trò chuyện chung' : 'General chat'} • ${language === 'vi' ? 'Không có trợ lý' : 'No agent'}`
+                      : `${language === 'vi' ? 'Cuộc trò chuyện chung' : 'General conversation'} • ${language === 'vi' ? 'Không có trợ lý' : 'No agent'}`)
                 : (language === 'vi' ? 'Chọn cuộc trò chuyện hoặc tạo mới' : 'Select conversation or create new')
               }
             </Text>
@@ -1307,9 +1620,6 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
               activeOpacity={0.8}
             >
               <Icon name="add" size={20} color={theme.colors.surface} />
-              <Text style={[styles.newConversationText, { color: theme.colors.surface }]}>
-                {language === 'vi' ? 'Cuộc trò chuyện mới' : 'New Conversation'}
-              </Text>
             </TouchableOpacity>
           )}
           
@@ -1352,20 +1662,49 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
             </TouchableOpacity>
           )}
           
+          {/* Delete Chatbox Button - show when in chat with any chatbox */}
+          {(() => {
+            const shouldShow = isInChat && selectedChatbox && selectedChatbox.id > 0;
+            console.log('🔍 Delete button debug:', {
+              isInChat,
+              selectedChatbox: selectedChatbox ? { id: selectedChatbox.id, title: selectedChatbox.title } : null,
+              shouldShow
+            });
+            return shouldShow;
+          })() && (
+            <TouchableOpacity 
+              style={[
+                styles.deleteChatboxButton,
+                { 
+                  backgroundColor: theme.colors.error + '40', // More visible background
+                  borderColor: theme.colors.error,
+                  borderWidth: 2,
+                }
+              ]}
+              onPress={handleDeleteChatbox}
+              activeOpacity={0.7}
+            >
+              <Icon name="delete" size={24} color={theme.colors.error} />
+            </TouchableOpacity>
+          )}
+          
         </View>
       </View>
     </View>
   );
 
-  const renderConversationItem = ({ item }: { item: { agentId: number; messages: ChatMessageWithAgent[]; latestMessage: ChatMessageWithAgent } }) => {
-    const agent = allAgents.find(a => a.id === item.agentId);
-    const isUserOwnAgent = agent && agent.user_id && agent.user_id === user?.id;
+  const renderConversationItem = ({ item }: { item: { agentId?: number; chatboxId?: number; messages: ChatMessageWithAgent[]; latestMessage: ChatMessageWithAgent } }) => {
+    const agent = item.agentId ? allAgents.find(a => a.id === item.agentId) : null;
+    const chatbox = item.chatboxId ? allChatboxes.find(c => c.id === item.chatboxId) : null;
+    const isUserOwnAgent = agent && agent.user_id && agent.user_id === Number(user?.id);
     const isDefaultAgent = agent && (!agent.user_id || agent.user_id === 0);
     
     // Debug logging
     console.log('🔍 Conversation Item Debug:', {
       agentId: item.agentId,
+      chatboxId: item.chatboxId,
       agentName: agent?.name,
+      chatboxTitle: chatbox?.title,
       agentUserId: agent?.user_id,
       currentUserId: user?.id,
       isUserOwnAgent,
@@ -1484,18 +1823,44 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
     return (
       <View style={[styles.conversationItem, { backgroundColor: theme.colors.surface }]}>
         <TouchableOpacity 
-          onPress={() => handleConversationPress(item.agentId)}
+          onPress={() => {
+            if (item.agentId) {
+              handleConversationPress(item.agentId);
+            } else if (item.chatboxId && item.chatboxId > 0) {
+              handleChatboxConversationPress(item.chatboxId);
+            } else if (item.chatboxId === -1) {
+              // Handle general conversation press - navigate to chat with no agent/chatbox
+              setSelectedChatbox(null);
+              setSelectedAgent(null);
+              setIsInChat(true);
+            }
+          }}
           style={styles.conversationTouchable}
           activeOpacity={0.7}
         >
           <View style={styles.conversationHeader}>
             <View style={styles.conversationAgentInfo}>
               <View style={[styles.agentAvatar, { backgroundColor: theme.colors.primary + '20' }]}>
-                <Icon name="smart-toy" size={20} color={theme.colors.primary} />
+                <Icon 
+                  name={
+                    item.agentId 
+                      ? "smart-toy" 
+                      : item.chatboxId === -1 
+                        ? "help" 
+                        : "chat"
+                  } 
+                  size={20} 
+                  color={theme.colors.primary} 
+                />
               </View>
               <View style={styles.conversationTextContainer}>
                 <Text style={[styles.conversationAgentName, { color: theme.colors.text }]}>
-                  {getAgentName(item.agentId)}
+                  {item.agentId 
+                    ? getAgentName(item.agentId) 
+                    : item.chatboxId === -1 
+                      ? (language === 'vi' ? 'Chat Chung' : 'General Chat')
+                      : (chatbox?.title || 'Unknown Chatbox')
+                  }
                 </Text>
                 <Text style={[styles.conversationMessage, { color: theme.colors.textSecondary }]} numberOfLines={1}>
                   {item.latestMessage.message}
@@ -1514,23 +1879,137 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
         </TouchableOpacity>
         
         {/* Clean Modern Delete Button */}
-        {agent && (
+        {(() => {
+          // Show delete button for any conversation that has an agent OR a chatboxId
+          // Don't require the chatbox to exist in allChatboxes - just check if item.chatboxId exists
+          const shouldShowDelete = (agent || item.chatboxId);
+          console.log('🔍 Delete button debug for conversation:', {
+            itemChatboxId: item.chatboxId,
+            chatboxFound: !!chatbox,
+            chatboxTitle: chatbox?.title,
+            agentFound: !!agent,
+            agentName: agent?.name,
+            shouldShowDelete,
+            allChatboxesLength: allChatboxes.length
+          });
+          return shouldShowDelete;
+        })() && (
           <TouchableOpacity 
             style={[
               styles.conversationDeleteButton, 
               { 
-                backgroundColor: isDefaultAgent 
-                  ? 'rgba(108, 117, 125, 0.08)' // Subtle gray for default agents
-                  : 'rgba(220, 53, 69, 0.08)',   // Subtle red for custom agents
+                backgroundColor: agent 
+                  ? (isDefaultAgent 
+                      ? 'rgba(108, 117, 125, 0.15)' // More visible gray for default agents
+                      : 'rgba(220, 53, 69, 0.15)')   // More visible red for custom agents
+                  : 'rgba(220, 53, 69, 0.15)',       // More visible red for chatboxes
+                borderWidth: 1,
+                borderColor: agent 
+                  ? (isDefaultAgent 
+                      ? 'rgba(108, 117, 125, 0.3)' 
+                      : 'rgba(220, 53, 69, 0.3)')   
+                  : 'rgba(220, 53, 69, 0.3)',
               }
             ]}
-            onPress={handleDeleteAgentFromConversation}
+            onPress={agent ? handleDeleteAgentFromConversation : () => {
+              // Handle chatbox deletion or general conversation deletion
+              if (item.chatboxId === -1 && user) {
+                // Handle general conversation deletion
+                Alert.alert(
+                  language === 'vi' ? 'Xóa Cuộc Trò Chuyện' : 'Delete Conversation',
+                  language === 'vi' 
+                    ? `Bạn có chắc chắn muốn xóa cuộc trò chuyện "General Chat"?\n\nĐiều này sẽ xóa vĩnh viễn tất cả tin nhắn trong cuộc trò chuyện này.`
+                    : `Are you sure you want to delete the "General Chat" conversation?\n\nThis will permanently delete all messages in this conversation.`,
+                  [
+                    {
+                      text: language === 'vi' ? 'Hủy' : 'Cancel',
+                      style: 'cancel',
+                    },
+                    {
+                      text: language === 'vi' ? 'Xóa' : 'Delete',
+                      style: 'destructive',
+                      onPress: async () => {
+                        try {
+                          // Delete all general messages (messages without agent_id and chatbox_id)
+                          const generalMessages = item.messages;
+                          let deletedCount = 0;
+                          
+                          for (const message of generalMessages) {
+                            try {
+                              await apiService.deleteMessage(message.id, Number(user.id));
+                              deletedCount++;
+                            } catch (error) {
+                              console.error(`Error deleting message ${message.id}:`, error);
+                            }
+                          }
+                          
+                          Alert.alert(
+                            language === 'vi' ? 'Thành công' : 'Success',
+                            language === 'vi' 
+                              ? `Đã xóa ${deletedCount} tin nhắn từ cuộc trò chuyện General Chat`
+                              : `Successfully deleted ${deletedCount} messages from General Chat conversation`
+                          );
+                          
+                          // Refresh data
+                          loadChatHistory();
+                        } catch (error) {
+                          console.error('Error deleting general conversation:', error);
+                          Alert.alert(
+                            language === 'vi' ? 'Lỗi' : 'Error',
+                            language === 'vi' ? 'Không thể xóa cuộc trò chuyện' : 'Failed to delete conversation'
+                          );
+                        }
+                      }
+                    }
+                  ]
+                );
+              } else if (item.chatboxId && item.chatboxId > 0 && user) {
+                // Handle regular chatbox deletion (even if chatbox not found in allChatboxes)
+                const chatboxTitle = chatbox?.title || `Chatbox ${item.chatboxId}`;
+                Alert.alert(
+                  language === 'vi' ? 'Xóa Cuộc Trò Chuyện' : 'Delete Conversation',
+                  language === 'vi' 
+                    ? `Bạn có chắc chắn muốn xóa "${chatboxTitle}"?\n\nĐiều này sẽ xóa vĩnh viễn tất cả tin nhắn trong cuộc trò chuyện này.`
+                    : `Are you sure you want to delete "${chatboxTitle}"?\n\nThis will permanently delete all messages in this conversation.`,
+                  [
+                    {
+                      text: language === 'vi' ? 'Hủy' : 'Cancel',
+                      style: 'cancel',
+                    },
+                    {
+                      text: language === 'vi' ? 'Xóa' : 'Delete',
+                      style: 'destructive',
+                      onPress: async () => {
+                        try {
+                          if (item.chatboxId && item.chatboxId > 0) {
+                            await apiService.deleteChatbox(item.chatboxId, Number(user.id));
+                          }
+                          Alert.alert(
+                            language === 'vi' ? 'Thành công' : 'Success',
+                            language === 'vi' ? 'Cuộc trò chuyện đã được xóa' : 'Conversation deleted successfully'
+                          );
+                          // Refresh data
+                          loadChatHistory();
+                          loadAllChatboxes();
+                        } catch (error) {
+                          console.error('Error deleting chatbox:', error);
+                          Alert.alert(
+                            language === 'vi' ? 'Lỗi' : 'Error',
+                            language === 'vi' ? 'Không thể xóa cuộc trò chuyện' : 'Failed to delete conversation'
+                          );
+                        }
+                      }
+                    }
+                  ]
+                );
+              }
+            }}
             activeOpacity={0.7}
           >
             <Icon 
-              name={isDefaultAgent ? "clear-all" : "delete"} 
-              size={20} 
-              color={isDefaultAgent ? '#6c757d' : '#dc3545'} 
+              name={agent ? (isDefaultAgent ? "clear-all" : "delete") : "delete"} 
+              size={24} 
+              color={agent ? (isDefaultAgent ? '#6c757d' : '#dc3545') : '#dc3545'} 
             />
           </TouchableOpacity>
         )}
@@ -1554,11 +2033,11 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
       </Text>
       <TouchableOpacity 
         style={[styles.selectAgentButton, { backgroundColor: theme.colors.primary }]}
-        onPress={handleCreateNewChat}
+        onPress={() => setShowAgentSelector(true)}
       >
         <Icon name="add" size={20} color="white" />
         <Text style={styles.selectAgentText}>
-          {language === 'vi' ? 'Tạo Cuộc Trò Chuyện Mới' : 'Create New Conversation'}
+          {language === 'vi' ? 'Chọn Agent' : 'Select Agent'}
         </Text>
       </TouchableOpacity>
     </View>
@@ -1738,24 +2217,38 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
                 />
               </TouchableOpacity>
               
-              {/* Test Dialog Button - Remove this after debugging */}
+              <SpeechToTextButton
+                onTextRecognized={handleSpeechRecognized}
+                disabled={isSending}
+                size={22}
+                style={[
+                  styles.importButton,
+                  {
+                    backgroundColor: theme.colors.surface,
+                    borderColor: theme.colors.border,
+                    marginLeft: 8,
+                  }
+                ]}
+              />
+              
+              {/* Speech Test Button - Remove this after debugging */}
               <TouchableOpacity
                 onPress={() => {
-                  console.log('🧪 Test dialog button pressed');
-                  showFileProcessingOptions('This is a test message from file import.', 'test.txt');
+                  console.log('🎤 Speech test button pressed');
+                  setShowSpeechTest(true);
                 }}
                 style={[
                   styles.importButton,
                   {
-                    backgroundColor: theme.colors.error,
-                    borderColor: theme.colors.error,
+                    backgroundColor: theme.colors.success,
+                    borderColor: theme.colors.success,
                     marginLeft: 8,
                   }
                 ]}
                 activeOpacity={0.8}
               >
                 <Icon
-                  name="bug-report"
+                  name="mic"
                   size={22}
                   color={theme.colors.surface}
                 />
@@ -1790,8 +2283,23 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
       ) : (
         // Conversations List
         <FlatList
-          data={getConversationsByAgent()}
-          keyExtractor={(item) => String(item.agentId)}
+          data={(() => {
+            const agentConversations = getConversationsByAgent();
+            const chatboxConversations = getConversationsByChatbox();
+            const generalConversations = getGeneralConversations();
+            const allConversations = [...agentConversations, ...chatboxConversations, ...generalConversations];
+            
+            console.log('🔄 ChatScreen: FlatList data debug:', {
+              agentConversations: agentConversations.length,
+              chatboxConversations: chatboxConversations.length,
+              generalConversations: generalConversations.length,
+              totalConversations: allConversations.length,
+              chatboxDetails: chatboxConversations.map(c => ({ id: c.chatboxId, messageCount: c.messages.length }))
+            });
+            
+            return allConversations;
+          })()}
+          keyExtractor={(item) => String('agentId' in item ? item.agentId : item.chatboxId)}
           renderItem={renderConversationItem}
           contentContainerStyle={styles.conversationsList}
           showsVerticalScrollIndicator={false}
@@ -1800,7 +2308,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
           onRefresh={async () => {
             setIsRefreshingConversations(true);
             try {
-              await Promise.all([loadChatHistory(), loadAllAgents()]);
+              await Promise.all([loadChatHistory(), loadAllAgents(), loadAllChatboxes()]);
             } finally {
               setIsRefreshingConversations(false);
             }
@@ -1853,6 +2361,15 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation }) => {
             </View>
           </View>
         </View>
+      </Modal>
+
+      {/* Speech Test Modal */}
+      <Modal
+        visible={showSpeechTest}
+        animationType="slide"
+        presentationStyle="pageSheet"
+      >
+        <SpeechDiagnostic onClose={() => setShowSpeechTest(false)} />
       </Modal>
     </SafeAreaView>
   );
@@ -1947,11 +2464,11 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   newConversationButton: {
-    flexDirection: 'row',
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
     borderWidth: 1,
     shadowColor: '#000',
     shadowOffset: {
@@ -1961,11 +2478,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
-  },
-  newConversationText: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginLeft: 6,
   },
   cleanupButton: {
     width: 48,
@@ -2026,6 +2538,24 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  deleteChatboxButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(220, 53, 69, 0.3)',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
   loadingIcon: {
     width: 64,
     height: 64,
@@ -2078,7 +2608,8 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
   },
   messageBubble: {
-    maxWidth: '75%',
+    maxWidth: '85%',
+    minWidth: '20%',
     borderRadius: 20,
     padding: 16,
     position: 'relative',
@@ -2088,6 +2619,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 2,
     borderWidth: 1,
+    flexShrink: 1,
   },
   userMessageBubble: {
     borderBottomRightRadius: 8,
@@ -2119,6 +2651,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 22,
     marginBottom: 8,
+    flexWrap: 'wrap',
+    flexShrink: 1,
   },
   aiResponseSection: {
     marginTop: 12,

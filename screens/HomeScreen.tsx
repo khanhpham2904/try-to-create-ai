@@ -20,6 +20,7 @@ import { useAgent } from '../components/AgentContext';
 import { apiService, ChatMessageWithAgent, Agent } from '../services/api';
 import { LanguageSelector } from '../components/LanguageSelector';
 import AgentSelector from '../components/AgentSelector';
+import { useFocusEffect } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
 interface HomeScreenProps {
@@ -34,12 +35,14 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   const [chatHistory, setChatHistory] = useState<ChatMessageWithAgent[]>([]);
   const [availableAgents, setAvailableAgents] = useState<Agent[]>([]);
   const [allAgents, setAllAgents] = useState<Agent[]>([]);
+  const [allChatboxes, setAllChatboxes] = useState<any[]>([]);
   const [apiHealthy, setApiHealthy] = useState<null | boolean>(null);
   const [isPinging, setIsPinging] = useState(false);
   const scrollRef = useRef<ScrollView | null>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [showLanguageSelector, setShowLanguageSelector] = useState(false);
   const [showAgentSelector, setShowAgentSelector] = useState(false);
+  const [showFAQ, setShowFAQ] = useState(false);
 
   const displayName = (user as any)?.full_name || (user as any)?.name || (user as any)?.email || 'User';
 
@@ -56,6 +59,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
       loadChatHistory();
       loadAvailableAgents();
       loadAllAgents();
+      loadAllChatboxes();
     }
   }, [user]);
 
@@ -64,13 +68,26 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     pingApi(false);
   }, []);
 
+  // Refresh data when screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      if (user) {
+        loadChatHistory();
+        loadAvailableAgents();
+        loadAllAgents();
+        loadAllChatboxes();
+      }
+    }, [user])
+  );
+
 
 
   const loadChatHistory = async () => {
     if (!user) return;
 
     try {
-      const response = await apiService.getUserMessages(Number((user as any).id), 0, 20);
+      const userId = parseInt(user.id);
+      const response = await apiService.getUserMessages(userId, 0, 100);
       if (response.data?.messages) {
         setChatHistory(response.data.messages as ChatMessageWithAgent[]);
       }
@@ -102,6 +119,20 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
       }
     } catch (error) {
       console.error('Error loading all agents:', error);
+    }
+  };
+
+  const loadAllChatboxes = async () => {
+    if (!user) return;
+
+    try {
+      const userId = parseInt(user.id);
+      const response = await apiService.getUserChatboxes(userId);
+      if (response.data) {
+        setAllChatboxes(response.data.chatboxes);
+      }
+    } catch (error) {
+      console.error('Error loading chatboxes:', error);
     }
   };
 
@@ -206,6 +237,53 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
       .sort((a, b) => new Date(b.latestMessage.created_at).getTime() - new Date(a.latestMessage.created_at).getTime());
   };
 
+  const getConversationsByChatbox = () => {
+    const conversations: { [chatboxId: number]: ChatMessageWithAgent[] } = {};
+    
+    chatHistory.forEach(message => {
+      if (message.chatbox_id) {
+        if (!conversations[message.chatbox_id]) {
+          conversations[message.chatbox_id] = [];
+        }
+        conversations[message.chatbox_id].push(message);
+      }
+    });
+
+    // Convert to array and sort by latest message
+    return Object.entries(conversations)
+      .map(([chatboxId, messages]) => ({
+        chatboxId: parseInt(chatboxId),
+        messages: messages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+        latestMessage: messages[0] // Already sorted, so first is latest
+      }))
+      .sort((a, b) => new Date(b.latestMessage.created_at).getTime() - new Date(a.latestMessage.created_at).getTime());
+  };
+
+  const getGeneralConversations = () => {
+    // Get messages that have no agent_id and no chatbox_id (general chat)
+    const generalMessages = chatHistory.filter(message => 
+      !message.agent_id && !message.chatbox_id
+    );
+    
+    if (generalMessages.length === 0) {
+      return [];
+    }
+    
+    // Group all general messages into one conversation
+    const sortedMessages = generalMessages.sort((a, b) => 
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+    
+    // Create a fake chatbox ID for general conversations (use negative number to avoid conflicts)
+    const generalConversation = {
+      chatboxId: -1, // Special ID for general conversations
+      messages: sortedMessages,
+      latestMessage: sortedMessages[0]
+    };
+    
+    return [generalConversation];
+  };
+
   const handleConversationPress = (agentId: number) => {
     const agent = allAgents.find(a => a.id === agentId);
     if (agent) {
@@ -214,41 +292,121 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     }
   };
 
-  const renderConversationItem = ({ item }: { item: { agentId: number; messages: ChatMessageWithAgent[]; latestMessage: ChatMessageWithAgent } }) => {
+  const handleChatboxConversationPress = (chatboxId: number) => {
+    const chatbox = allChatboxes.find(c => c.id === chatboxId);
+    if (chatbox) {
+      // Navigate to chat screen with chatbox context
+      navigation.navigate('Chat', { chatboxId: chatboxId });
+    }
+  };
+
+  const handleDeleteConversation = async (item: { agentId?: number; chatboxId?: number; messages: ChatMessageWithAgent[]; latestMessage: ChatMessageWithAgent }) => {
+    if (!user) return;
+
+    const conversationName = item.agentId 
+      ? getAgentName(item.agentId) 
+      : item.chatboxId === -1 
+        ? 'General Chat'
+        : allChatboxes.find(c => c.id === item.chatboxId)?.title || 'Unknown Chatbox';
+
+    Alert.alert(
+      language === 'vi' ? 'Xóa Cuộc Trò Chuyện' : 'Delete Conversation',
+      language === 'vi' 
+        ? `Bạn có chắc chắn muốn xóa cuộc trò chuyện "${conversationName}"?\n\nĐiều này sẽ xóa vĩnh viễn tất cả tin nhắn trong cuộc trò chuyện này.`
+        : `Are you sure you want to delete the conversation "${conversationName}"?\n\nThis will permanently delete all messages in this conversation.`,
+      [
+        {
+          text: language === 'vi' ? 'Hủy' : 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: language === 'vi' ? 'Xóa' : 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Delete all messages in the conversation
+              const deletePromises = item.messages.map(message => 
+                apiService.deleteMessage(message.id, Number(user.id))
+              );
+              
+              await Promise.all(deletePromises);
+              
+              // Reload chat history to update the UI
+              await loadChatHistory();
+              
+              Alert.alert(
+                language === 'vi' ? 'Thành công' : 'Success',
+                language === 'vi' ? 'Cuộc trò chuyện đã được xóa' : 'Conversation deleted successfully'
+              );
+            } catch (error) {
+              console.error('Error deleting conversation:', error);
+              Alert.alert(
+                language === 'vi' ? 'Lỗi' : 'Error',
+                language === 'vi' ? 'Không thể xóa cuộc trò chuyện. Vui lòng thử lại' : 'Failed to delete conversation. Please try again'
+              );
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const renderConversationItem = ({ item }: { item: { agentId?: number; chatboxId?: number; messages: ChatMessageWithAgent[]; latestMessage: ChatMessageWithAgent } }) => {
     const TouchableComponent = Platform.OS === 'android' ? TouchableNativeFeedback : TouchableOpacity;
     const touchableProps = Platform.OS === 'android' 
       ? { background: TouchableNativeFeedback.Ripple(theme.colors.primary + '20', false) }
       : { activeOpacity: 0.7 };
 
+    const chatbox = item.chatboxId && item.chatboxId > 0 ? allChatboxes.find(c => c.id === item.chatboxId) : null;
+    const isGeneralConversation = item.chatboxId === -1;
+
     return (
       <TouchableComponent 
         {...touchableProps}
-        onPress={() => handleConversationPress(item.agentId)}
+        onPress={() => {
+          if (item.agentId) {
+            handleConversationPress(item.agentId);
+          } else if (item.chatboxId && item.chatboxId > 0) {
+            handleChatboxConversationPress(item.chatboxId);
+          } else if (isGeneralConversation) {
+            // Handle general conversation press - navigate to chat with no agent/chatbox
+            navigation.navigate('Chat', {});
+          }
+        }}
       >
         <View style={[styles.conversationItem, { backgroundColor: theme.colors.surface }]}>
-      <View style={styles.conversationHeader}>
-        <View style={styles.conversationAgentInfo}>
-          <View style={[styles.agentAvatar, { backgroundColor: theme.colors.primary + '20' }]}>
-            <Icon name="smart-toy" size={20} color={theme.colors.primary} />
+          <View style={styles.conversationHeader}>
+            <View style={styles.conversationAgentInfo}>
+              <View style={[styles.agentAvatar, { backgroundColor: theme.colors.primary + '20' }]}>
+                <Icon name={item.agentId ? "smart-toy" : (isGeneralConversation ? "help" : "chat")} size={20} color={theme.colors.primary} />
+              </View>
+              <View style={styles.conversationTextContainer}>
+                <Text style={[styles.conversationAgentName, { color: theme.colors.text }]}>
+                  {item.agentId ? getAgentName(item.agentId) : (isGeneralConversation ? 'General Chat' : (chatbox?.title || 'Unknown Chatbox'))}
+                </Text>
+                <Text style={[styles.conversationMessage, { color: theme.colors.textSecondary }]} numberOfLines={1}>
+                  {item.latestMessage.message}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.conversationActions}>
+              <View style={styles.conversationMeta}>
+                <Text style={[styles.conversationTime, { color: theme.colors.textSecondary }]}>
+                  {formatTime(item.latestMessage.created_at)}
+                </Text>
+                <Text style={[styles.conversationDate, { color: theme.colors.textSecondary }]}>
+                  {formatDate(item.latestMessage.created_at)}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => handleDeleteConversation(item)}
+                style={[styles.deleteButton, { backgroundColor: theme.colors.error + '20' }]}
+                activeOpacity={0.7}
+              >
+                <Icon name="delete" size={16} color={theme.colors.error} />
+              </TouchableOpacity>
+            </View>
           </View>
-          <View style={styles.conversationTextContainer}>
-            <Text style={[styles.conversationAgentName, { color: theme.colors.text }]}>
-              {getAgentName(item.agentId)}
-            </Text>
-            <Text style={[styles.conversationMessage, { color: theme.colors.textSecondary }]} numberOfLines={1}>
-              {item.latestMessage.message}
-            </Text>
-          </View>
-        </View>
-                 <View style={styles.conversationMeta}>
-           <Text style={[styles.conversationTime, { color: theme.colors.textSecondary }]}>
-             {formatTime(item.latestMessage.created_at)}
-           </Text>
-           <Text style={[styles.conversationDate, { color: theme.colors.textSecondary }]}>
-             {formatDate(item.latestMessage.created_at)}
-           </Text>
-         </View>
-       </View>
        </View>
      </TouchableComponent>
    );
@@ -404,15 +562,15 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
 
 
 
-        {/* Chat History with Agents */}
+        {/* Chat History with Agents and Chatboxes */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-            {language === 'vi' ? 'Lịch Sử Chat với Agent' : 'Chat History with Agents'}
+            {language === 'vi' ? 'Lịch Sử Chat' : 'Chat History'}
           </Text>
-          {getConversationsByAgent().length > 0 ? (
+          {[...getConversationsByAgent(), ...getConversationsByChatbox(), ...getGeneralConversations()].length > 0 ? (
             <FlatList
-              data={getConversationsByAgent()}
-              keyExtractor={(item) => String(item.agentId)}
+              data={[...getConversationsByAgent(), ...getConversationsByChatbox(), ...getGeneralConversations()]}
+              keyExtractor={(item) => String('agentId' in item ? item.agentId : item.chatboxId)}
               renderItem={renderConversationItem}
               scrollEnabled={false}
               showsVerticalScrollIndicator={false}
@@ -477,6 +635,213 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         >
           <Icon name="arrow-upward" size={20} color={'white'} />
         </TouchableOpacity>
+      )}
+
+      {/* FAQ Button - Bottom Right - Android Optimized */}
+      {Platform.OS === 'android' && (
+        <TouchableOpacity
+          onPress={() => setShowFAQ(true)}
+          style={[styles.faqButtonAndroid, { backgroundColor: theme.colors.primary }]}
+          activeOpacity={0.7}
+        >
+          <Icon name="help-outline" size={28} color="white" />
+        </TouchableOpacity>
+      )}
+
+      {/* FAQ Modal - Android Optimized */}
+      {showFAQ && Platform.OS === 'android' && (
+        <View style={styles.faqModalOverlayAndroid}>
+          <View style={[styles.faqModalAndroid, { backgroundColor: theme.colors.surface }]}>
+            {/* Android-style Header */}
+            <View style={[styles.faqHeaderAndroid, { borderBottomColor: theme.colors.border }]}>
+              <View style={styles.faqHeaderContent}>
+                <Icon name="help-outline" size={24} color={theme.colors.primary} />
+                <Text style={[styles.faqTitleAndroid, { color: theme.colors.text }]}>
+                  {language === 'vi' ? 'Hướng Dẫn Sử Dụng' : 'Manual Instructions'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowFAQ(false)}
+                style={[styles.faqCloseButtonAndroid, { backgroundColor: theme.colors.surface }]}
+                activeOpacity={0.7}
+              >
+                <Icon name="close" size={20} color={theme.colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            
+            {/* Android-style Content */}
+            <ScrollView 
+              style={styles.faqContentAndroid} 
+              showsVerticalScrollIndicator={true}
+              indicatorStyle="dark"
+            >
+              {/* Creating Conversations Section */}
+              <View style={styles.faqSectionAndroid}>
+                <View style={styles.faqSectionHeader}>
+                  <Icon name="add-circle-outline" size={20} color={theme.colors.primary} />
+                  <Text style={[styles.faqSectionTitleAndroid, { color: theme.colors.text }]}>
+                    {language === 'vi' ? 'Tạo Cuộc Trò Chuyện Mới' : 'Creating New Conversations'}
+                  </Text>
+                </View>
+                <View style={styles.faqBulletList}>
+                  <View style={styles.faqBulletItem}>
+                    <Text style={styles.faqBullet}>•</Text>
+                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' 
+                        ? 'Nhấn nút "+" ở góc trên bên phải để tạo cuộc trò chuyện mới'
+                        : 'Tap the "+" button in the top right corner to create a new conversation'
+                      }
+                    </Text>
+                  </View>
+                  <View style={styles.faqBulletItem}>
+                    <Text style={styles.faqBullet}>•</Text>
+                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' 
+                        ? 'Chọn agent từ danh sách có sẵn'
+                        : 'Select an agent from the available list'
+                      }
+                    </Text>
+                  </View>
+                  <View style={styles.faqBulletItem}>
+                    <Text style={styles.faqBullet}>•</Text>
+                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' 
+                        ? 'Bắt đầu trò chuyện với agent đã chọn'
+                        : 'Start chatting with your chosen agent'
+                      }
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Managing Chat History Section */}
+              <View style={styles.faqSectionAndroid}>
+                <View style={styles.faqSectionHeader}>
+                  <Icon name="history" size={20} color={theme.colors.primary} />
+                  <Text style={[styles.faqSectionTitleAndroid, { color: theme.colors.text }]}>
+                    {language === 'vi' ? 'Quản Lý Lịch Sử Chat' : 'Managing Chat History'}
+                  </Text>
+                </View>
+                <View style={styles.faqBulletList}>
+                  <View style={styles.faqBulletItem}>
+                    <Text style={styles.faqBullet}>•</Text>
+                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' 
+                        ? 'Lịch sử chat được cập nhật tự động khi bạn quay lại màn hình chính'
+                        : 'Chat history updates automatically when you return to the home screen'
+                      }
+                    </Text>
+                  </View>
+                  <View style={styles.faqBulletItem}>
+                    <Text style={styles.faqBullet}>•</Text>
+                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' 
+                        ? 'Nhấn vào cuộc trò chuyện để tiếp tục chat với agent'
+                        : 'Tap on a conversation to continue chatting with that agent'
+                      }
+                    </Text>
+                  </View>
+                  <View style={styles.faqBulletItem}>
+                    <Text style={styles.faqBullet}>•</Text>
+                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' 
+                        ? 'Xóa cuộc trò chuyện bằng nút thùng rác'
+                        : 'Delete conversations using the trash button'
+                      }
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Customizing Agents Section */}
+              <View style={styles.faqSectionAndroid}>
+                <View style={styles.faqSectionHeader}>
+                  <Icon name="smart-toy" size={20} color={theme.colors.primary} />
+                  <Text style={[styles.faqSectionTitleAndroid, { color: theme.colors.text }]}>
+                    {language === 'vi' ? 'Tùy Chỉnh Agent' : 'Customizing Agents'}
+                  </Text>
+                </View>
+                <View style={styles.faqBulletList}>
+                  <View style={styles.faqBulletItem}>
+                    <Text style={styles.faqBullet}>•</Text>
+                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' 
+                        ? 'Tạo agent tùy chỉnh với tính cách và phong cách riêng'
+                        : 'Create custom agents with unique personalities and response styles'
+                      }
+                    </Text>
+                  </View>
+                  <View style={styles.faqBulletItem}>
+                    <Text style={styles.faqBullet}>•</Text>
+                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' 
+                        ? 'Chỉnh sửa agent hiện có từ menu agent'
+                        : 'Edit existing agents from the agent menu'
+                      }
+                    </Text>
+                  </View>
+                  <View style={styles.faqBulletItem}>
+                    <Text style={styles.faqBullet}>•</Text>
+                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' 
+                        ? 'Mỗi agent có thể có phong cách trả lời khác nhau'
+                        : 'Each agent can have different response styles'
+                      }
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Other Features Section */}
+              <View style={styles.faqSectionAndroid}>
+                <View style={styles.faqSectionHeader}>
+                  <Icon name="settings" size={20} color={theme.colors.primary} />
+                  <Text style={[styles.faqSectionTitleAndroid, { color: theme.colors.text }]}>
+                    {language === 'vi' ? 'Tính Năng Khác' : 'Other Features'}
+                  </Text>
+                </View>
+                <View style={styles.faqBulletList}>
+                  <View style={styles.faqBulletItem}>
+                    <Text style={styles.faqBullet}>•</Text>
+                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' 
+                        ? 'Thay đổi ngôn ngữ từ menu cài đặt'
+                        : 'Change language from settings menu'
+                      }
+                    </Text>
+                  </View>
+                  <View style={styles.faqBulletItem}>
+                    <Text style={styles.faqBullet}>•</Text>
+                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' 
+                        ? 'Kiểm tra trạng thái kết nối API'
+                        : 'Check API connection status'
+                      }
+                    </Text>
+                  </View>
+                  <View style={styles.faqBulletItem}>
+                    <Text style={styles.faqBullet}>•</Text>
+                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' 
+                        ? 'Xóa cache để làm mới dữ liệu'
+                        : 'Clear cache to refresh data'
+                      }
+                    </Text>
+                  </View>
+                  <View style={styles.faqBulletItem}>
+                    <Text style={styles.faqBullet}>•</Text>
+                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' 
+                        ? 'Import file để xử lý nội dung'
+                        : 'Import files to process content'
+                      }
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
       )}
 
       {/* Language Selector Modal */}
@@ -670,6 +1035,23 @@ const styles = StyleSheet.create({
     fontSize: Platform.OS === 'android' ? 12 : 11,
     fontWeight: Platform.OS === 'android' ? '400' : '300',
   },
+  conversationActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Platform.OS === 'android' ? 12 : 8,
+  },
+  deleteButton: {
+    width: Platform.OS === 'android' ? 32 : 28,
+    height: Platform.OS === 'android' ? 32 : 28,
+    borderRadius: Platform.OS === 'android' ? 16 : 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: Platform.OS === 'android' ? 2 : 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: Platform.OS === 'android' ? 2 : 1 },
+    shadowOpacity: Platform.OS === 'android' ? 0.1 : 0.05,
+    shadowRadius: Platform.OS === 'android' ? 4 : 2,
+  },
   
   emptyStateCard: {
     padding: Platform.OS === 'android' ? 48 : 40,
@@ -755,6 +1137,115 @@ const styles = StyleSheet.create({
       cursor: 'pointer',
     }),
     zIndex: 1000,
+  },
+  // Android-specific FAQ Button
+  faqButtonAndroid: {
+    position: 'absolute',
+    right: 20,
+    bottom: 20,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    zIndex: 1000,
+  },
+  // Android-specific FAQ Modal
+  faqModalOverlayAndroid: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'flex-end',
+    zIndex: 1001,
+  },
+  faqModalAndroid: {
+    width: '100%',
+    maxHeight: '85%',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    elevation: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+  },
+  faqHeaderAndroid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 20,
+    borderBottomWidth: 1,
+  },
+  faqHeaderContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  faqTitleAndroid: {
+    fontSize: 22,
+    fontWeight: '600',
+    marginLeft: 12,
+    letterSpacing: 0.5,
+  },
+  faqCloseButtonAndroid: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  faqContentAndroid: {
+    paddingHorizontal: 24,
+    paddingBottom: 24,
+  },
+  faqSectionAndroid: {
+    marginBottom: 32,
+  },
+  faqSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  faqSectionTitleAndroid: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginLeft: 12,
+    letterSpacing: 0.3,
+  },
+  faqBulletList: {
+    paddingLeft: 8,
+  },
+  faqBulletItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  faqBullet: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginRight: 12,
+    marginTop: 2,
+    color: '#666',
+  },
+  faqTextAndroid: {
+    fontSize: 15,
+    lineHeight: 22,
+    flex: 1,
+    letterSpacing: 0.2,
   },
 });
 

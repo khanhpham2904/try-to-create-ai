@@ -40,6 +40,7 @@ export interface RegisterRequest {
 export interface ChatMessage {
   id: number;
   user_id: number;
+  chatbox_id?: number;
   agent_id?: number;
   message: string;
   response: string;
@@ -51,18 +52,49 @@ export interface ChatMessageCreate {
   user_id: number;
   message: string;
   response?: string;
+  chatbox_id?: number;
   agent_id?: number;
 }
 
 export interface ChatMessageWithAgent {
   id: number;
   user_id: number;
+  chatbox_id?: number;
   agent_id?: number;
   message: string;
   response: string;
   context_used?: string;
   created_at: string;
   agent?: Agent;
+}
+
+// Chatbox interfaces
+export interface Chatbox {
+  id: number;
+  user_id: number;
+  title: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface ChatboxCreate {
+  user_id: number;
+  title: string;
+}
+
+export interface ChatboxUpdate {
+  title?: string;
+}
+
+export interface ChatboxWithMessages extends Chatbox {
+  messages: ChatMessageWithAgent[];
+}
+
+export interface ChatboxListResponse {
+  chatboxes: Chatbox[];
+  total_count: number;
+  skip: number;
+  limit: number;
 }
 
 export interface Agent {
@@ -282,7 +314,7 @@ class ApiService {
         }
         
         return {
-          error: data.detail || `HTTP ${response.status}`,
+          error: (data && data.detail) || `HTTP ${response.status}`,
           status: response.status,
         };
       }
@@ -333,7 +365,7 @@ class ApiService {
         }
         
         return {
-          error: data.detail || `HTTP ${response.status}`,
+          error: (data && data.detail) || `HTTP ${response.status}`,
           status: response.status,
         };
       }
@@ -597,6 +629,68 @@ class ApiService {
     console.log('🧹 Cleaning up orphaned conversations for user:', userId);
     return this.makeRequest<{message: string, orphaned_count: number}>(`/api/v1/agents/cleanup-orphaned-conversations?user_id=${userId}`, {
       method: 'POST',
+    });
+  }
+
+  // ============================================================================
+  // CHATBOX METHODS
+  // ============================================================================
+
+  async createChatbox(chatboxData: ChatboxCreate): Promise<ApiResponse<Chatbox>> {
+    console.log('📦 Creating chatbox:', chatboxData.title);
+    return this.makeRequest<Chatbox>('/api/v1/chatbox/chatboxes', {
+      method: 'POST',
+      body: JSON.stringify(chatboxData),
+    });
+  }
+
+  async getUserChatboxes(
+    userId: number, 
+    skip: number = 0, 
+    limit: number = 100
+  ): Promise<ApiResponse<ChatboxListResponse>> {
+    console.log('📦 Getting chatboxes for user:', userId);
+    return this.makeRequest<ChatboxListResponse>(
+      `/api/v1/chatbox/chatboxes?user_id=${userId}&skip=${skip}&limit=${limit}`
+    );
+  }
+
+  async getChatbox(
+    chatboxId: number, 
+    userId: number
+  ): Promise<ApiResponse<Chatbox>> {
+    console.log('📦 Getting chatbox:', chatboxId);
+    return this.makeRequest<Chatbox>(`/api/v1/chatbox/chatboxes/${chatboxId}?user_id=${userId}`);
+  }
+
+  async getChatboxWithMessages(
+    chatboxId: number, 
+    userId: number,
+    skip: number = 0,
+    limit: number = 100
+  ): Promise<ApiResponse<ChatboxWithMessages>> {
+    console.log('📦 Getting chatbox with messages:', chatboxId);
+    return this.makeRequest<ChatboxWithMessages>(
+      `/api/v1/chatbox/chatboxes/${chatboxId}/messages?user_id=${userId}&skip=${skip}&limit=${limit}`
+    );
+  }
+
+  async updateChatbox(
+    chatboxId: number, 
+    userId: number, 
+    chatboxData: ChatboxUpdate
+  ): Promise<ApiResponse<Chatbox>> {
+    console.log('📦 Updating chatbox:', chatboxId);
+    return this.makeRequest<Chatbox>(`/api/v1/chatbox/chatboxes/${chatboxId}?user_id=${userId}`, {
+      method: 'PUT',
+      body: JSON.stringify(chatboxData),
+    });
+  }
+
+  async deleteChatbox(chatboxId: number, userId: number): Promise<ApiResponse<void>> {
+    console.log('📦 Deleting chatbox:', chatboxId);
+    return this.makeRequest<void>(`/api/v1/chatbox/chatboxes/${chatboxId}?user_id=${userId}`, {
+      method: 'DELETE'
     });
   }
 

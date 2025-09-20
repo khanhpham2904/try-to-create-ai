@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 // Get the appropriate base URL based on the environment and device
 const getBaseUrl = () => {
   // Use Azure production URL
-  return 'http://192.168.1.13:8000';   
+  return 'https://chat-app-aqhyf8fhaefzgvha.eastasia-01.azurewebsites.net';   
 };
 
 // Improved fallback URLs with proper protocols

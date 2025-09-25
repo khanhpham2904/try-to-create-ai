@@ -370,7 +370,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
             handleChatboxConversationPress(item.chatboxId);
           } else if (isGeneralConversation) {
             // Handle general conversation press - navigate to chat with no agent/chatbox
-            navigation.navigate('Chat', {});
+            navigation.navigate('Chat', { generalChat: true });
           }
         }}
       >

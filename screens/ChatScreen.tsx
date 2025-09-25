@@ -106,12 +106,14 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
         setSelectedAgent(null);
         setIsInChat(true);
       }
-    } else if (route?.params && Object.keys(route.params).length === 0 && user) {
-      // General chat mode - no specific agent or chatbox
+    } else if (route?.params?.generalChat && user) {
+      // General chat mode - explicitly requested from HomeScreen
       setSelectedChatbox(null);
       setSelectedAgent(null);
       setIsInChat(true);
     }
+    // Note: Removed auto-loading general chat when route.params is empty
+    // This prevents unwanted auto-loading when returning to ChatScreen
   }, [route?.params, user, allChatboxes]);
 
   // Reload messages when screen comes into focus (when rejoining app)
@@ -1260,16 +1262,23 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
   };
 
   const handleBackToConversations = async () => {
-    setIsInChat(false);
-    setSelectedAgent(null);
-    setSelectedChatbox(null);
-    setMessages([]);
-    // Refresh conversation history when going back to show latest conversations
-    setIsRefreshingConversations(true);
-    try {
-      await Promise.all([loadChatHistory(), loadAllAgents(), loadAllChatboxes()]);
-    } finally {
-      setIsRefreshingConversations(false);
+    // Check if we came from HomeScreen (has route params)
+    if (route?.params?.generalChat || route?.params?.chatboxId) {
+      // Navigate back to HomeScreen since we came from there
+      navigation.navigate('Home');
+    } else {
+      // Normal behavior - just reset state and stay in ChatScreen
+      setIsInChat(false);
+      setSelectedAgent(null);
+      setSelectedChatbox(null);
+      setMessages([]);
+      // Refresh conversation history when going back to show latest conversations
+      setIsRefreshingConversations(true);
+      try {
+        await Promise.all([loadChatHistory(), loadAllAgents(), loadAllChatboxes()]);
+      } finally {
+        setIsRefreshingConversations(false);
+      }
     }
   };
 
@@ -1662,31 +1671,6 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
             </TouchableOpacity>
           )}
           
-          {/* Delete Chatbox Button - show when in chat with any chatbox */}
-          {(() => {
-            const shouldShow = isInChat && selectedChatbox && selectedChatbox.id > 0;
-            console.log('🔍 Delete button debug:', {
-              isInChat,
-              selectedChatbox: selectedChatbox ? { id: selectedChatbox.id, title: selectedChatbox.title } : null,
-              shouldShow
-            });
-            return shouldShow;
-          })() && (
-            <TouchableOpacity 
-              style={[
-                styles.deleteChatboxButton,
-                { 
-                  backgroundColor: theme.colors.error + '40', // More visible background
-                  borderColor: theme.colors.error,
-                  borderWidth: 2,
-                }
-              ]}
-              onPress={handleDeleteChatbox}
-              activeOpacity={0.7}
-            >
-              <Icon name="delete" size={24} color={theme.colors.error} />
-            </TouchableOpacity>
-          )}
           
         </View>
       </View>
@@ -2537,24 +2521,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  deleteChatboxButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginLeft: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(220, 53, 69, 0.3)',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
   },
   loadingIcon: {
     width: 64,

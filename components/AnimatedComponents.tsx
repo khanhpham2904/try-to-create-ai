@@ -308,7 +308,7 @@ export const AnimatedFeatureItem: React.FC<AnimatedFeatureItemProps> = ({
 
   const animatedStyle = useAnimatedStyle(() => {
     return {
-      transform: [{ translateX: translateX.value }],
+      transform: [{ translateX: Number(translateX.value) }],
       opacity: opacity.value,
     };
   });

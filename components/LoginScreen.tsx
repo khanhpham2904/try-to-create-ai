@@ -19,6 +19,7 @@ import { useTheme } from '../theme/ThemeContext';
 import { useFormValidation } from '../hooks/useFormValidation';
 import { useLanguage } from '../i18n/LanguageContext';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import { LinearGradient } from 'expo-linear-gradient';
 
 interface LoginScreenProps {
   navigation: any;
@@ -123,12 +124,21 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
-      <StatusBar barStyle={theme.type === 'dark' ? 'light-content' : 'dark-content'} />
-      <KeyboardAvoidingView 
-        style={styles.keyboardContainer} 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
+    <LinearGradient
+      colors={theme.type === 'dark' 
+        ? ['#0F0F23', '#1A1625', '#2D3748'] 
+        : ['#667EEA', '#764BA2', '#FAFAFA']
+      }
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={styles.container}
+    >
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar barStyle={theme.type === 'dark' ? 'light-content' : 'dark-content'} />
+        <KeyboardAvoidingView 
+          style={styles.keyboardContainer} 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
         <ScrollView 
           contentContainerStyle={styles.scrollContent} 
           showsVerticalScrollIndicator={false}
@@ -136,19 +146,23 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
         >
           {/* Header Section */}
           <View style={styles.headerSection}>
-            <View style={[styles.logoContainer, { backgroundColor: theme.colors.primary + '15' }]}>
+            <View style={[styles.logoContainer, { backgroundColor: 'rgba(255,255,255,0.15)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }]}>
               <AnimatedLogo size={60} />
             </View>
-            <Text style={[styles.title, { color: theme.colors.text }]}>
-              {t('language') === 'vi' ? 'Chào Mừng Trở Lại' : 'Welcome Back'}
+            <Text style={[styles.title, { color: 'white', textShadowColor: 'rgba(0,0,0,0.3)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 }]}>
+              {t('language') === 'vi' ? '✨ Chào Mừng Trở Lại' : '✨ Welcome Back'}
             </Text>
-            <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
+            <Text style={[styles.subtitle, { color: 'rgba(255,255,255,0.8)', textShadowColor: 'rgba(0,0,0,0.2)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 }]}>
               {t('language') === 'vi' ? 'Đăng nhập để tiếp tục cuộc trò chuyện AI của bạn' : 'Sign in to continue your AI conversations'}
             </Text>
           </View>
 
           {/* Form Section */}
-          <View style={[styles.formContainer, { backgroundColor: theme.colors.surface }]}>
+          <View style={[styles.formContainer, { 
+            backgroundColor: theme.type === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.9)', 
+            borderWidth: 1, 
+            borderColor: theme.type === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.3)'
+          }]}>
             <View style={styles.formHeader}>
               <Icon name="login" size={24} color={theme.colors.primary} />
               <Text style={[styles.formTitle, { color: theme.colors.text }]}>
@@ -276,13 +290,17 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
             </View>
           </View>
         </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+  },
+  safeArea: {
     flex: 1,
   },
   keyboardContainer: {

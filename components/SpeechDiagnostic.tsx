@@ -61,7 +61,7 @@ export const SpeechDiagnostic: React.FC<SpeechDiagnosticProps> = ({ onClose }) =
           results.push('❌ Voice module not loaded');
         }
       } catch (e) {
-        results.push(`❌ Voice module error: ${e.message}`);
+        results.push(`❌ Voice module error: ${(e as Error).message}`);
       }
       
       setDiagnostics(results);
@@ -138,7 +138,7 @@ export const SpeechDiagnostic: React.FC<SpeechDiagnosticProps> = ({ onClose }) =
           </TouchableOpacity>
           
           <TouchableOpacity
-            style={[styles.button, { backgroundColor: theme.colors.secondary }]}
+            style={[styles.button, { backgroundColor: theme.colors.primaryLight }]}
             onPress={requestPermissions}
           >
             <Icon name="security" size={20} color={theme.colors.surface} />

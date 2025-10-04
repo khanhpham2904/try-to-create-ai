@@ -29,6 +29,13 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import { SpeechToTextButton } from '../components/SpeechToTextButton';
 import { SpeechDiagnostic } from '../components/SpeechDiagnostic';
+import { ScrollView } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { AnimatedStatusIndicator } from '../components/AnimatedStatusIndicator';
+import { AnimatedBackground } from '../components/AnimatedBackground';
+import { FloatingActionButton } from '../components/FloatingActionButton';
+import { ChatMessageBubble } from '../components/ChatMessageBubble';
+import { ChatInput } from '../components/ChatInput';
 
 interface ChatScreenProps {
   navigation: any;
@@ -55,7 +62,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
   const [selectedChatbox, setSelectedChatbox] = useState<Chatbox | null>(null);
   const [isInChat, setIsInChat] = useState(false);
   const [isRefreshingConversations, setIsRefreshingConversations] = useState(false);
-  const flatListRef = useRef<FlatList>(null);
+  const scrollRef = useRef<ScrollView>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   // Add ref to track sending state to prevent race conditions
   const isSendingRef = useRef(false);
@@ -71,6 +78,8 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
   const [shouldPreserveScroll, setShouldPreserveScroll] = useState(false);
   const [isRestoringScroll, setIsRestoringScroll] = useState(false);
   const [showSpeechTest, setShowSpeechTest] = useState(false);
+  const [lastNewChatTimestamp, setLastNewChatTimestamp] = useState<number | null>(null);
+  const [lastExistingChatTimestamp, setLastExistingChatTimestamp] = useState<number | null>(null);
 
   // Function to force message refresh
   const forceMessageRefresh = () => {
@@ -96,25 +105,91 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
     }
   }, [user]);
 
+  // Add focus effect to restore layout when returning from modals
+  useEffect(() => {
+    if (!showAgentSelector && !showAgentCustomizer && isInChat) {
+      // Restore layout when modals close
+      setTimeout(() => {
+        setMessageRefreshKey(prev => prev + 1);
+      }, 150);
+    }
+  }, [showAgentSelector, showAgentCustomizer, isInChat]);
+
   // Handle navigation parameters (chatboxId from HomeScreen)
   useEffect(() => {
     if (route?.params?.chatboxId && user) {
       const chatboxId = route.params.chatboxId;
       const chatbox = allChatboxes.find(c => c.id === chatboxId);
       if (chatbox) {
+        console.log('🔄 Setting chatbox mode:', chatbox.title, 'ID:', chatbox.id);
         setSelectedChatbox(chatbox);
         setSelectedAgent(null);
         setIsInChat(true);
+        // Clear any previous timestamps
+        setLastNewChatTimestamp(null);
+        setLastExistingChatTimestamp(null);
       }
-    } else if (route?.params?.generalChat && user) {
-      // General chat mode - explicitly requested from HomeScreen
+    } else if (route?.params?.generalChat && route?.params?.newChatTimestamp && user) {
+      // New general chat mode - explicitly requested from HomeScreen with timestamp
+      const currentTimestamp = route.params.newChatTimestamp;
+      if (lastNewChatTimestamp !== currentTimestamp) {
+        console.log('🔄 Setting new general chat mode with timestamp:', currentTimestamp);
+        setSelectedChatbox(null);
+        setSelectedAgent(null);
+        setMessages([]); // Clear messages to start fresh
+        setIsInChat(true);
+        setLastNewChatTimestamp(currentTimestamp); // Store timestamp to prevent re-processing
+        setLastExistingChatTimestamp(null); // Clear existing chat timestamp
+      }
+    } else if (route?.params?.existingGeneralChat && route?.params?.existingChatTimestamp && user) {
+      // Existing general chat mode - load existing general messages with timestamp
+      const currentTimestamp = route.params.existingChatTimestamp;
+      if (lastExistingChatTimestamp !== currentTimestamp) {
+        console.log('🔄 Setting existing general chat mode with timestamp:', currentTimestamp);
+        setSelectedChatbox(null);
+        setSelectedAgent(null);
+        setIsInChat(true);
+        setLastExistingChatTimestamp(currentTimestamp); // Store timestamp to prevent re-processing
+        setLastNewChatTimestamp(null); // Clear new chat timestamp
+        // Don't clear messages here - let loadMessages() load existing messages
+      }
+    } else if (route?.params?.agent && user) {
+      // Agent-specific chat mode
+      const agent = route.params.agent;
+      console.log('🔄 Setting agent mode:', agent.name, 'ID:', agent.id);
+      setSelectedAgent(agent);
       setSelectedChatbox(null);
-      setSelectedAgent(null);
       setIsInChat(true);
+      // Clear any previous timestamps
+      setLastNewChatTimestamp(null);
+      setLastExistingChatTimestamp(null);
     }
     // Note: Removed auto-loading general chat when route.params is empty
     // This prevents unwanted auto-loading when returning to ChatScreen
   }, [route?.params, user, allChatboxes]);
+
+  // Reset timestamps when route params change
+  useEffect(() => {
+    if (!route?.params?.generalChat && !route?.params?.existingGeneralChat && !route?.params?.chatboxId && !route?.params?.agent) {
+      console.log('🔄 Clearing timestamps - no relevant route params');
+      setLastNewChatTimestamp(null);
+      setLastExistingChatTimestamp(null);
+    }
+  }, [route?.params?.generalChat, route?.params?.existingGeneralChat, route?.params?.chatboxId, route?.params?.agent]);
+
+  // Cleanup effect when component unmounts or when leaving chat mode
+  useEffect(() => {
+    return () => {
+      // Cleanup when component unmounts
+      console.log('🧹 ChatScreen cleanup - clearing state');
+      setMessages([]);
+      setSelectedAgent(null);
+      setSelectedChatbox(null);
+      setIsInChat(false);
+      setLastNewChatTimestamp(null);
+      setLastExistingChatTimestamp(null);
+    };
+  }, []);
 
   // Reload messages when screen comes into focus (when rejoining app)
   useFocusEffect(
@@ -184,15 +259,15 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
       // Use multiple attempts to ensure scroll restoration works
       const restoreScroll = () => {
         setTimeout(() => {
-          if (flatListRef.current) {
-            flatListRef.current.scrollToOffset({ offset: scrollPosition, animated: false });
+          if (scrollRef.current) {
+            scrollRef.current.scrollTo({ y: scrollPosition, animated: false });
             console.log('📱 Scroll restoration attempted');
           }
         }, 50);
         
         setTimeout(() => {
-          if (flatListRef.current) {
-            flatListRef.current.scrollToOffset({ offset: scrollPosition, animated: false });
+          if (scrollRef.current) {
+            scrollRef.current.scrollTo({ y: scrollPosition, animated: false });
             console.log('📱 Scroll restoration retry');
           }
         }, 150);
@@ -273,6 +348,15 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
       return;
     }
     
+    console.log('📜 loadMessages called - Current state:', {
+      selectedAgent: selectedAgent?.name || 'none',
+      selectedChatbox: selectedChatbox?.title || 'none',
+      isInChat,
+      lastNewChatTimestamp,
+      lastExistingChatTimestamp,
+      routeParams: route?.params
+    });
+    
     setIsLoading(true);
     try {
       if (selectedAgent) {
@@ -345,44 +429,92 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
         }
       } else {
         // General chat mode - no specific agent or chatbox selected
-        console.log('📜 Loading general messages for user:', user.id, '(no specific agent or chatbox)');
-        // Add a small delay to show loading state
-        await new Promise(resolve => setTimeout(resolve, 300));
+        console.log('📜 General chat mode for user:', user.id, '(no specific agent or chatbox)');
         
-        const response = await apiService.getUserMessages(Number(user.id), 0, 100);
-        console.log('📜 General messages response:', response);
-        
-        if (response.data && response.data.messages) {
-          // Filter for general messages (no agent_id and no chatbox_id)
-          const generalMessages = response.data.messages.filter((msg: any) => 
-            !msg.agent_id && !msg.chatbox_id
-          );
-          
-          console.log('📜 Found', generalMessages.length, 'general messages');
-          
-          // Process messages to ensure proper format
-          let processedMessages = generalMessages.map((msg: any) => ({
-            id: msg.id,
-            message: msg.message || '',
-            response: msg.response || '',
-            user_id: msg.user_id,
-            agent_id: msg.agent_id,
-            chatbox_id: msg.chatbox_id,
-            created_at: msg.created_at,
-          }));
-          
-          // Sort messages chronologically (oldest first, newest last)
-          const sortedMessages = processedMessages.sort((a, b) => {
-            const dateA = new Date(a.created_at).getTime();
-            const dateB = new Date(b.created_at).getTime();
-            return dateA - dateB; // Ascending order (oldest first)
-          });
-          
-          console.log('📜 Processed and sorted general messages:', sortedMessages);
-          setMessages(sortedMessages);
-        } else {
-          console.log('📜 No general messages found or invalid response format');
+        // Check if this is a fresh general chat (requested via generalChat parameter with timestamp)
+        if (route?.params?.generalChat && route?.params?.newChatTimestamp && lastNewChatTimestamp === route.params.newChatTimestamp) {
+          console.log('📜 Fresh general chat requested - starting with empty messages');
           setMessages([]);
+        } else if (route?.params?.existingGeneralChat && route?.params?.existingChatTimestamp && lastExistingChatTimestamp === route.params.existingChatTimestamp) {
+          console.log('📜 Existing general chat requested - loading existing messages');
+          // Load existing general messages
+          await new Promise(resolve => setTimeout(resolve, 300));
+          
+          const response = await apiService.getUserMessages(Number(user.id), 0, 100);
+          console.log('📜 General messages response:', response);
+          
+          if (response.data && response.data.messages) {
+            // Filter for general messages (no agent_id and no chatbox_id)
+            const generalMessages = response.data.messages.filter((msg: any) => 
+              !msg.agent_id && !msg.chatbox_id
+            );
+            
+            console.log('📜 Found', generalMessages.length, 'general messages');
+            
+            // Process messages to ensure proper format
+            let processedMessages = generalMessages.map((msg: any) => ({
+              id: msg.id,
+              message: msg.message || '',
+              response: msg.response || '',
+              user_id: msg.user_id,
+              agent_id: msg.agent_id,
+              chatbox_id: msg.chatbox_id,
+              created_at: msg.created_at,
+            }));
+            
+            // Sort messages chronologically (oldest first, newest last)
+            const sortedMessages = processedMessages.sort((a, b) => {
+              const dateA = new Date(a.created_at).getTime();
+              const dateB = new Date(b.created_at).getTime();
+              return dateA - dateB; // Ascending order (oldest first)
+            });
+            
+            console.log('📜 Processed and sorted general messages:', sortedMessages);
+            setMessages(sortedMessages);
+          } else {
+            console.log('📜 No general messages found or invalid response format');
+            setMessages([]);
+          }
+        } else {
+          console.log('📜 Normal general chat mode - loading existing messages');
+          // Load existing general messages (for normal general chat)
+          await new Promise(resolve => setTimeout(resolve, 300));
+          
+          const response = await apiService.getUserMessages(Number(user.id), 0, 100);
+          console.log('📜 General messages response:', response);
+          
+          if (response.data && response.data.messages) {
+            // Filter for general messages (no agent_id and no chatbox_id)
+            const generalMessages = response.data.messages.filter((msg: any) => 
+              !msg.agent_id && !msg.chatbox_id
+            );
+            
+            console.log('📜 Found', generalMessages.length, 'general messages');
+            
+            // Process messages to ensure proper format
+            let processedMessages = generalMessages.map((msg: any) => ({
+              id: msg.id,
+              message: msg.message || '',
+              response: msg.response || '',
+              user_id: msg.user_id,
+              agent_id: msg.agent_id,
+              chatbox_id: msg.chatbox_id,
+              created_at: msg.created_at,
+            }));
+            
+            // Sort messages chronologically (oldest first, newest last)
+            const sortedMessages = processedMessages.sort((a, b) => {
+              const dateA = new Date(a.created_at).getTime();
+              const dateB = new Date(b.created_at).getTime();
+              return dateA - dateB; // Ascending order (oldest first)
+            });
+            
+            console.log('📜 Processed and sorted general messages:', sortedMessages);
+            setMessages(sortedMessages);
+          } else {
+            console.log('📜 No general messages found or invalid response format');
+            setMessages([]);
+          }
         }
       }
       
@@ -390,7 +522,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
       if (!shouldPreserveScroll) {
         console.log('📜 Switching conversation - scrolling to top');
         setTimeout(() => {
-          flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+          scrollRef.current?.scrollTo({ y: 0, animated: true });
         }, 100);
       } else if (shouldPreserveScroll) {
         console.log('📜 Preserving scroll position during refresh');
@@ -482,7 +614,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
     
     // Scroll to bottom to show the new message
     setTimeout(() => {
-      flatListRef.current?.scrollToEnd({ animated: true });
+      scrollRef.current?.scrollToEnd({ animated: true });
     }, 100);
 
     console.log('💬 ChatScreen: Sending message with agent:', selectedAgent?.id, 'chatbox:', selectedChatbox?.id);
@@ -602,7 +734,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
         const responseLength = (response.data && response.data.response) ? response.data.response.length : 0;
         const scrollDelay = responseLength > 1000 ? 500 : 300;
         setTimeout(() => {
-          flatListRef.current?.scrollToEnd({ animated: true });
+          scrollRef.current?.scrollToEnd({ animated: true });
         }, scrollDelay);
         
         // Log response length for debugging
@@ -830,7 +962,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
         return;
       }
 
-        content = await FileSystem.readAsStringAsync(file.uri, { encoding: FileSystem.EncodingType.UTF8 });
+        content = await FileSystem.readAsStringAsync(file.uri, { encoding: 'utf8' });
         fileName = file.name || 'conversation.txt';
       }
 
@@ -1246,6 +1378,9 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
       setSelectedAgent(agent);
       setSelectedChatbox(null);
       setIsInChat(true);
+      // Clear any previous timestamps to ensure proper message loading
+      setLastNewChatTimestamp(null);
+      setLastExistingChatTimestamp(null);
       // loadMessages() will be called by useEffect when selectedAgent changes
     }
   };
@@ -1257,28 +1392,33 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
       setSelectedChatbox(chatbox);
       setSelectedAgent(null);
       setIsInChat(true);
+      // Clear any previous timestamps to ensure proper message loading
+      setLastNewChatTimestamp(null);
+      setLastExistingChatTimestamp(null);
       // loadMessages() will be called by useEffect when selectedChatbox changes
     }
   };
 
   const handleBackToConversations = async () => {
-    // Check if we came from HomeScreen (has route params)
-    if (route?.params?.generalChat || route?.params?.chatboxId) {
-      // Navigate back to HomeScreen since we came from there
-      navigation.navigate('Home');
-    } else {
-      // Normal behavior - just reset state and stay in ChatScreen
-      setIsInChat(false);
-      setSelectedAgent(null);
-      setSelectedChatbox(null);
-      setMessages([]);
-      // Refresh conversation history when going back to show latest conversations
-      setIsRefreshingConversations(true);
-      try {
-        await Promise.all([loadChatHistory(), loadAllAgents(), loadAllChatboxes()]);
-      } finally {
-        setIsRefreshingConversations(false);
-      }
+    // Reset all conversation state immediately to prevent layout shifts
+    setIsInChat(false);
+    setSelectedAgent(null);
+    setSelectedChatbox(null);
+    setMessages([]);
+    
+    // Clear timestamps
+    setLastNewChatTimestamp(null);
+    setLastExistingChatTimestamp(null);
+    
+    // Clear route parameters to prevent loop by navigating to ChatScreen with empty params
+    navigation.navigate('Chat', {});
+    
+    // Always return to conversation list within ChatScreen
+    setIsRefreshingConversations(true);
+    try {
+      await Promise.all([loadChatHistory(), loadAllAgents(), loadAllChatboxes()]);
+    } finally {
+      setIsRefreshingConversations(false);
     }
   };
 
@@ -1363,8 +1503,19 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
     setShowAgentSelector(false);
     if (agent) {
       console.log('🔄 Agent selected:', agent.name, 'ID:', agent.id);
+      setSelectedChatbox(null);
       setIsInChat(true);
-      // loadMessages() will be called by useEffect when selectedAgent changes
+      // Clear any previous timestamps to ensure proper message loading
+      setLastNewChatTimestamp(null);
+      setLastExistingChatTimestamp(null);
+      // Force multiple layout refreshes to prevent shift
+      setTimeout(() => {
+        setMessageRefreshKey(prev => prev + 1);
+        // Additional refresh for layout stability
+        setTimeout(() => {
+          setMessageRefreshKey(prev => prev + 1);
+        }, 50);
+      }, 100);
     }
   };
 
@@ -1646,31 +1797,6 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
             </TouchableOpacity>
           )}
           
-          {isInChat && (
-            <TouchableOpacity 
-              style={[
-                styles.agentProfileButton, 
-                { 
-                  backgroundColor: selectedAgent ? theme.colors.primary : theme.colors.surface,
-                  borderColor: selectedAgent ? theme.colors.primary : theme.colors.border,
-                }
-              ]}
-              onPress={() => setShowAgentSelector(true)}
-              activeOpacity={0.8}
-            >
-              <View style={[
-                styles.agentProfileAvatar, 
-                { backgroundColor: selectedAgent ? theme.colors.surface : theme.colors.primary + '20' }
-              ]}>
-                <Icon 
-                  name="smart-toy" 
-                  size={18} 
-                  color={selectedAgent ? theme.colors.primary : theme.colors.primary} 
-                />
-              </View>
-            </TouchableOpacity>
-          )}
-          
           
         </View>
       </View>
@@ -1814,9 +1940,13 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
               handleChatboxConversationPress(item.chatboxId);
             } else if (item.chatboxId === -1) {
               // Handle general conversation press - navigate to chat with no agent/chatbox
+              console.log('🔄 General conversation pressed');
               setSelectedChatbox(null);
               setSelectedAgent(null);
               setIsInChat(true);
+              // Clear any previous timestamps to ensure proper message loading
+              setLastNewChatTimestamp(null);
+              setLastExistingChatTimestamp(null);
             }
           }}
           style={styles.conversationTouchable}
@@ -2015,15 +2145,6 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
           : 'Start your first conversation with an AI assistant'
         }
       </Text>
-      <TouchableOpacity 
-        style={[styles.selectAgentButton, { backgroundColor: theme.colors.primary }]}
-        onPress={() => setShowAgentSelector(true)}
-      >
-        <Icon name="add" size={20} color="white" />
-        <Text style={styles.selectAgentText}>
-          {language === 'vi' ? 'Chọn Agent' : 'Select Agent'}
-        </Text>
-      </TouchableOpacity>
     </View>
   );
 
@@ -2052,13 +2173,82 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
   }
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
+    <AnimatedBackground intensity="light">
+      <SafeAreaView 
+        style={[styles.container, { backgroundColor: 'transparent' }]}
+        key={`chat-screen-${messageRefreshKey}`}
+      >
       <StatusBar 
-        barStyle={theme.type === 'dark' ? 'light-content' : 'dark-content'} 
-        backgroundColor={theme.colors.surface}
-        translucent={Platform.OS === 'android'}
-      />
-      {renderHeader()}
+          barStyle="light-content"
+          backgroundColor="transparent"
+          translucent={true}
+        />
+        
+        {/* Modern Gradient Header */}
+        <LinearGradient
+          colors={theme.type === 'dark' 
+            ? ['#8B5CF6', '#7C3AED', '#111827'] as [string, string, ...string[]]
+            : ['#667EEA', '#764BA2', '#FFFFFF'] as [string, string, ...string[]]
+          }
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.modernHeader}
+        >
+          <View style={styles.headerContent}>
+            {isInChat && (
+              <TouchableOpacity
+                style={[styles.backButtonModern, { backgroundColor: 'rgba(255,255,255,0.2)' }]}
+                onPress={handleBackToConversations}
+              >
+                <Icon name="arrow-back" size={24} color="white" />
+              </TouchableOpacity>
+            )}
+            
+            <View style={styles.headerMiddle}>
+              {selectedAgent ? (
+                <>
+                  <LinearGradient
+                    colors={['#FFFFFF', '#F7FAFC'] as [string, string, ...string[]]}
+                    style={styles.agentAvatarModern}
+                  >
+                    <Icon name="smart-toy" size={24} color={theme.colors.primary} />
+                  </LinearGradient>
+                  <View style={styles.agentInfo}>
+                    <Text style={styles.agentNameModern}>{selectedAgent.name}</Text>
+                    <AnimatedStatusIndicator 
+                      status="online" 
+                      showText={true} 
+                      size="small"
+                      animated={true}
+                    />
+                  </View>
+                </>
+              ) : (
+                <View style={styles.noAgentInfo}>
+                  <Text style={styles.noAgentTitle}>
+                    {isInChat 
+                      ? (language === 'vi' ? '💬 Chat Chung' : '💬 General Chat')
+                      : (language === 'vi' ? '📚 Lịch Sử Chat' : '📚 Chat History')
+                    }
+                  </Text>
+                  <Text style={styles.noAgentSubtitle}>
+                    {isInChat 
+                      ? (language === 'vi' ? 'Chat với hệ thống tổng quát' : 'Chat with general system')
+                      : (language === 'vi' ? 'Xem tất cả cuộc trò chuyện' : 'View all conversations')
+                    }
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            <TouchableOpacity
+              style={[styles.headerActionButton, { backgroundColor: 'rgba(255,255,255,0.2)' }]}
+              onPress={() => setShowAgentSelector(true)}
+            >
+              <Icon name="smart-toy" size={20} color="white" />
+            </TouchableOpacity>
+          </View>
+        </LinearGradient>
       
       <AgentSelector
         selectedAgent={selectedAgent}
@@ -2077,7 +2267,12 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
         }}
         onAgentCreated={(agent) => {
           setSelectedAgent(agent);
+          setSelectedChatbox(null);
           setShowAgentSelector(false);
+          setIsInChat(true);
+          // Clear any previous timestamps to ensure proper message loading
+          setLastNewChatTimestamp(null);
+          setLastExistingChatTimestamp(null);
           // Refresh conversation history to show migrated conversations
           loadChatHistory();
           // Refresh agents list to include the new custom agent
@@ -2089,22 +2284,16 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
       />
       
       {isInChat ? (
-        // Chat Interface
+        // Modern Chat Interface
         <>
-          <FlatList
-            ref={flatListRef}
-            data={messages}
-            key={`messages-${messages.length}-${messageRefreshKey}`} // Force re-render when messages change
-            renderItem={({ item, index }) => {
-              console.log('📱 FlatList rendering item:', item, 'at index:', index);
-              return renderMessage(item, index);
-            }}
-            keyExtractor={(item) => item.id.toString()}
-            contentContainerStyle={[
-              styles.messagesList,
-              { paddingBottom: 20 }
-            ]}
+          {/* Messages Container */}
+          <ScrollView 
+            ref={scrollRef}
+            style={styles.messagesContainer}
+            contentContainerStyle={styles.messagesContent}
             showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            key={`messages-${messageRefreshKey}`}
             onContentSizeChange={() => {
               console.log('📱 FlatList content size changed, messages length:', messages.length);
               console.log('📱 Should preserve scroll:', shouldPreserveScroll, 'Scroll position:', scrollPosition);
@@ -2114,7 +2303,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
                 console.log('📱 Restoring scroll position to:', scrollPosition);
                 setIsRestoringScroll(true);
                 setTimeout(() => {
-                  flatListRef.current?.scrollToOffset({ offset: scrollPosition, animated: false });
+                  scrollRef.current?.scrollTo({ y: scrollPosition, animated: false });
                   setShouldPreserveScroll(false);
                   setIsRestoringScroll(false);
                   console.log('📱 Scroll position restored');
@@ -2122,7 +2311,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
               } else if (!shouldPreserveScroll && messages.length > 0) {
                 // Auto-scroll to bottom when content changes (new messages)
                 console.log('📱 Auto-scrolling to bottom');
-                flatListRef.current?.scrollToEnd({ animated: false });
+                scrollRef.current?.scrollToEnd({ animated: false });
               }
             }}
             onLayout={() => {
@@ -2134,7 +2323,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
                 console.log('📱 Restoring scroll position to:', scrollPosition);
                 setIsRestoringScroll(true);
                 setTimeout(() => {
-                  flatListRef.current?.scrollToOffset({ offset: scrollPosition, animated: false });
+                  scrollRef.current?.scrollTo({ y: scrollPosition, animated: false });
                   setShouldPreserveScroll(false);
                   setIsRestoringScroll(false);
                   console.log('📱 Scroll position restored');
@@ -2142,126 +2331,67 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
               } else if (!shouldPreserveScroll && messages.length > 0) {
                 // Auto-scroll to bottom on layout (new messages)
                 console.log('📱 Auto-scrolling to bottom');
-                flatListRef.current?.scrollToEnd({ animated: false });
+                scrollRef.current?.scrollToEnd({ animated: false });
               }
             }}
-            onScroll={(event) => {
-              // Track scroll position for preservation (only if not restoring)
-              if (!isRestoringScroll) {
-                const currentOffset = event.nativeEvent.contentOffset.y;
-                setScrollPosition(currentOffset);
-                console.log('📱 Scroll position updated:', currentOffset);
-              }
-            }}
-            scrollEventThrottle={16}
-            ListEmptyComponent={() => {
-              console.log('📱 FlatList showing empty state, messages length:', messages.length);
-              return renderEmptyState();
-            }}
-            ListHeaderComponent={isLoading ? (
+          >
+            {/* Message Content */}
+            {isLoading ? (
               <View style={styles.loadingContainer}>
+                <LinearGradient
+                  colors={['rgba(102,126,234,0.1)', 'rgba(118,75,162,0.1)'] as [string, string, ...string[]]}
+                  style={styles.loadingCard}
+                >
                 <ActivityIndicator size="small" color={theme.colors.primary} />
                 <Text style={[styles.loadingText, { color: theme.colors.textSecondary }]}>
                   {language === 'vi' ? 'Đang tải tin nhắn...' : 'Loading messages...'}
                 </Text>
+                </LinearGradient>
               </View>
-            ) : null}
-          />
+            ) : messages.length === 0 ? (
+              renderEmptyState()
+            ) : (
+              messages.map((message, index) => (
+                <React.Fragment key={message.id}>
+                  {/* User Message */}
+                  <ChatMessageBubble
+                    message={message.message}
+                    isUser={true}
+                    timestamp={new Date(message.created_at).toLocaleTimeString()}
+                    agentId={selectedAgent?.id}
+                    animated={true}
+                  />
+                  {/* AI Response */}
+                  {message.response && (
+                    <ChatMessageBubble
+                      message={message.response}
+                      isUser={false}
+                      timestamp={new Date(message.created_at).toLocaleTimeString()}
+                      agentId={selectedAgent?.id}
+                      animated={true}
+                    />
+                  )}
+                </React.Fragment>
+              ))
+            )}
+          </ScrollView>
 
+          {/* Modern Input Section */}
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            style={styles.inputContainer}
+            style={styles.modernInputContainer}
           >
-            <View style={[styles.inputWrapper, { backgroundColor: theme.colors.surface }]}>
-              <TextInput
-                style={[styles.textInput, { color: theme.colors.text }]}
+            <ChatInput
                 value={inputMessage}
                 onChangeText={setInputMessage}
+              onSend={sendMessage}
+              onAttach={handleImportTxt}
+              onSpeech={() => handleSpeechRecognized('')}
                 placeholder={language === 'vi' ? 'Nhập tin nhắn của bạn...' : 'Type your message...'}
-                placeholderTextColor={theme.colors.textSecondary}
-                multiline
-                maxLength={1000}
-                textAlignVertical="center"
-              />
-              <TouchableOpacity
-                onPress={handleImportTxt}
-                style={[
-                  styles.importButton,
-                  {
-                    backgroundColor: theme.colors.surface,
-                    borderColor: theme.colors.border,
-                  }
-                ]}
-                activeOpacity={0.8}
-              >
-                <Icon
-                  name="attach-file"
-                  size={22}
-                  color={theme.colors.textSecondary}
-                />
-              </TouchableOpacity>
-              
-              <SpeechToTextButton
-                onTextRecognized={handleSpeechRecognized}
                 disabled={isSending}
-                size={22}
-                style={[
-                  styles.importButton,
-                  {
-                    backgroundColor: theme.colors.surface,
-                    borderColor: theme.colors.border,
-                    marginLeft: 8,
-                  }
-                ]}
-              />
-              
-              {/* Speech Test Button - Remove this after debugging */}
-              <TouchableOpacity
-                onPress={() => {
-                  console.log('🎤 Speech test button pressed');
-                  setShowSpeechTest(true);
-                }}
-                style={[
-                  styles.importButton,
-                  {
-                    backgroundColor: theme.colors.success,
-                    borderColor: theme.colors.success,
-                    marginLeft: 8,
-                  }
-                ]}
-                activeOpacity={0.8}
-              >
-                <Icon
-                  name="mic"
-                  size={22}
-                  color={theme.colors.surface}
-                />
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={sendMessage}
-                disabled={!inputMessage.trim() || isSending}
-                style={[
-                  styles.sendButton,
-                  {
-                    backgroundColor: inputMessage.trim() && !isSending 
-                      ? theme.colors.primary 
-                      : theme.colors.border,
-                    transform: [{ scale: inputMessage.trim() && !isSending ? 1 : 0.9 }],
-                  }
-                ]}
-                activeOpacity={0.8}
-              >
-                {isSending ? (
-                  <ActivityIndicator size="small" color={theme.colors.surface} />
-                ) : (
-                  <Icon 
-                    name="send" 
-                    size={22} 
-                    color={inputMessage.trim() ? theme.colors.surface : theme.colors.textSecondary} 
-                  />
-                )}
-              </TouchableOpacity>
-            </View>
+              showAttach={true}
+              showSpeech={true}
+            />
           </KeyboardAvoidingView>
         </>
       ) : (
@@ -2355,13 +2485,146 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
       >
         <SpeechDiagnostic onClose={() => setShowSpeechTest(false)} />
       </Modal>
+
+      {/* Floating Action Button for New Chat */}
+      {!isInChat && (
+        <FloatingActionButton
+          icon="add"
+          onPress={() => {
+            console.log('🔄 New chat button pressed - creating new general chat');
+            // Navigate to ChatScreen with new chat parameters (same as HomeScreen)
+            navigation.navigate('Chat', { 
+              generalChat: true,
+              newChatTimestamp: Date.now()
+            });
+          }}
+          position="bottom-right"
+          primary={true}
+          elevation={12}
+        />
+      )}
+
     </SafeAreaView>
+    </AnimatedBackground>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  // Modern ChatScreen Styles
+  modernHeader: {
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight || 20 : 0,
+    paddingBottom: 16,
+    elevation: Platform.OS === 'android' ? 12 : 8,
+    shadowColor: '#8B5CF6',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+  },
+  headerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'android' ? 8 : 0,
+  },
+  backButtonModern: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 0.5,
+    borderColor: 'rgba(255,255,255,0.08)',
+    elevation: 4,
+    shadowColor: 'rgba(139, 92, 246, 0.5)',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+  },
+  headerMiddle: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16,
+  },
+  agentAvatarModern: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  agentInfo: {
+    flex: 1,
+  },
+  agentNameModern: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: 'white',
+    textShadowColor: 'rgba(0,0,0,0.3)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  noAgentInfo: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  noAgentTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: 'white',
+    textAlign: 'center',
+  },
+  noAgentSubtitle: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.8)',
+    textAlign: 'center',
+    marginTop: 2,
+  },
+  headerActionButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 0.5,
+    borderColor: 'rgba(255,255,255,0.08)',
+    elevation: 4,
+    shadowColor: 'rgba(139, 92, 246, 0.5)',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+  },
+  messagesContainer: {
+    flex: 1,
+    paddingHorizontal: 16,
+  },
+  messagesContent: {
+    paddingBottom: 20,
+    paddingTop: 16,
+  },
+  modernInputContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: Platform.OS === 'android' ? 8 : 16,
+  },
+  loadingCard: {
+    padding: 20,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 20,
+  },
+  loadingContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 20,
+  },
+  loadingText: {
+    marginTop: 8,
+    fontSize: 14,
   },
   centerContainer: {
     flex: 1,
@@ -2383,12 +2646,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 4,
     elevation: 2,
-  },
-  headerContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    minHeight: 60,
   },
   headerLeft: {
     flexDirection: 'row',
@@ -2498,30 +2755,6 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 2,
   },
-  agentProfileButton: {
-    padding: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  agentProfileAvatar: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
   loadingIcon: {
     width: 64,
     height: 64,
@@ -2529,18 +2762,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 24,
-  },
-  loadingText: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  loadingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 20,
-    gap: 8,
   },
   loadingSubtext: {
     fontSize: 14,
@@ -2749,20 +2970,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 24,
     marginBottom: 32,
-  },
-  selectAgentButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-  },
-  selectAgentText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
-    marginLeft: 8,
   },
   errorText: {
     fontSize: 16,

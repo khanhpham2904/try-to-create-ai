@@ -420,10 +420,17 @@ const AgentCustomizer: React.FC<AgentCustomizerProps> = ({
   return (
     <Modal
       visible={visible}
+      transparent={false}
       animationType="slide"
       onRequestClose={onClose}
+      statusBarTranslucent={false}
     >
-      <StatusBar backgroundColor={theme.colors.surface} barStyle="dark-content" />
+      <StatusBar 
+        backgroundColor={theme.colors.surface}
+        barStyle={theme.type === 'dark' ? 'light-content' : 'dark-content'}
+        translucent={false}
+        animated={false}
+      />
       <View style={styles.modalOverlay}>
         <View style={styles.header}>
           <View style={styles.headerLeft}>

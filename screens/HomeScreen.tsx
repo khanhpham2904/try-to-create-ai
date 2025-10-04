@@ -12,6 +12,7 @@ import {
   Platform,
   FlatList,
   Dimensions,
+  Modal,
 } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { useAuth } from '../components/AuthContext';
@@ -22,6 +23,12 @@ import { LanguageSelector } from '../components/LanguageSelector';
 import AgentSelector from '../components/AgentSelector';
 import { useFocusEffect } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { FloatingActionButton } from '../components/FloatingActionButton';
+import { AnimatedStatusIndicator } from '../components/AnimatedStatusIndicator';
+import { AnimatedBackground } from '../components/AnimatedBackground';
+import { ChatHistoryCard } from '../components/ChatHistoryCard';
+import { AgentCard } from '../components/AgentCard';
 
 interface HomeScreenProps {
   navigation: any;
@@ -38,6 +45,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   const [allChatboxes, setAllChatboxes] = useState<any[]>([]);
   const [apiHealthy, setApiHealthy] = useState<null | boolean>(null);
   const [isPinging, setIsPinging] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const scrollRef = useRef<ScrollView | null>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [showLanguageSelector, setShowLanguageSelector] = useState(false);
@@ -76,6 +84,8 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         loadAvailableAgents();
         loadAllAgents();
         loadAllChatboxes();
+        // Force refresh of conversation cards to prevent layout issues
+        setRefreshKey(prev => prev + 1);
       }
     }, [user])
   );
@@ -369,8 +379,11 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
           } else if (item.chatboxId && item.chatboxId > 0) {
             handleChatboxConversationPress(item.chatboxId);
           } else if (isGeneralConversation) {
-            // Handle general conversation press - navigate to chat with no agent/chatbox
-            navigation.navigate('Chat', { generalChat: true });
+            // Handle general conversation press - navigate to chat with existing general messages
+            navigation.navigate('Chat', { 
+              existingGeneralChat: true,
+              existingChatTimestamp: Date.now()
+            });
           }
         }}
       >
@@ -432,64 +445,74 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         translucent={Platform.OS === 'android'}
       />
 
-      {/* Redesigned Header */}
-      <View style={[styles.headerContainer, { backgroundColor: theme.colors.surface, borderBottomColor: theme.colors.border }]}>        
+      {/* Modern Gradient Header */}
+      <LinearGradient
+        colors={theme.type === 'dark' 
+          ? ['#8B5CF6', '#7C3AED', '#111827'] 
+          : ['#667EEA', '#764BA2', '#FFFFFF']
+        }
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.headerContainer}
+      >
         <View style={styles.headerLeftGroup}>
-          <View style={[styles.avatar, { backgroundColor: theme.colors.primary + '20' }]}>
-            <Text style={[styles.avatarInitials, { color: theme.colors.primary }]}>{String(displayName).slice(0,1).toUpperCase()}</Text>
+          <View style={[styles.avatar, { backgroundColor: 'rgba(255,255,255,0.2)' }]}>
+            <Text style={[styles.avatarInitials, { color: 'white' }]}>{String(displayName).slice(0,1).toUpperCase()}</Text>
           </View>
           <View>
-            <Text style={[styles.greeting, { color: theme.colors.text }]}>
+            <Text style={[styles.greeting, { color: 'rgba(255,255,255,0.8)' }]}>
               {language === 'vi' ? 'Chào mừng trở lại' : 'Welcome back'}
             </Text>
-            <Text style={[styles.userName, { color: theme.colors.text }]}>{displayName}</Text>
+            <Text style={[styles.userName, { color: 'white', fontWeight: '700' }]}>{displayName}</Text>
           </View>
         </View>
         <View style={styles.headerRightGroup}>
-          <View style={[styles.statusBadge, { backgroundColor: apiHealthy === null ? theme.colors.border : apiHealthy ? '#27AE6044' : '#EB575744', borderColor: apiHealthy ? '#27AE60' : apiHealthy === false ? '#EB5757' : theme.colors.border }]}>            
-            <Icon name={apiHealthy ? 'check-circle' : apiHealthy === false ? 'error' : 'sync'} size={16} color={apiHealthy ? '#27AE60' : apiHealthy === false ? '#EB5757' : theme.colors.textSecondary} />
-            <Text style={[styles.statusText, { color: theme.colors.textSecondary }]}>
-              {apiHealthy === null 
-                ? (language === 'vi' ? 'Đang kiểm tra' : 'Checking') 
+          <AnimatedStatusIndicator
+            status={
+              apiHealthy === null 
+                ? 'connecting'
                 : apiHealthy 
-                  ? (language === 'vi' ? 'Trực tuyến' : 'Online') 
-                  : (language === 'vi' ? 'Ngoại tuyến' : 'Offline')
-              }
-            </Text>
-          </View>
+                  ? 'online'
+                  : 'offline'
+            }
+            showText={true}
+            animated={true}
+            size="medium"
+            onPress={() => pingApi(true)}
+          />
           {Platform.OS === 'android' ? (
             <TouchableNativeFeedback
-              background={TouchableNativeFeedback.Ripple(theme.colors.primary + '20', false)}
+              background={TouchableNativeFeedback.Ripple('rgba(255,255,255,0.3)', false)}
               onPress={() => setShowLanguageSelector(true)}
             >
-              <View style={[styles.iconBtn, { backgroundColor: theme.colors.primary + '15' }]}>
-                <Icon name="language" size={20} color={theme.colors.primary} />
+              <View style={[styles.iconBtn, { backgroundColor: 'rgba(255,255,255,0.15)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' }]}>
+                <Icon name="language" size={20} color="white" />
               </View>
             </TouchableNativeFeedback>
           ) : (
             <TouchableOpacity 
               onPress={() => setShowLanguageSelector(true)} 
-              style={[styles.iconBtn, { backgroundColor: theme.colors.primary + '15' }]}
+              style={[styles.iconBtn, { backgroundColor: 'rgba(255,255,255,0.15)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' }]}
             >
-              <Icon name="language" size={20} color={theme.colors.primary} />
+              <Icon name="language" size={20} color="white" />
             </TouchableOpacity>
           )}
           {Platform.OS === 'android' ? (
             <TouchableNativeFeedback
-              background={TouchableNativeFeedback.Ripple(theme.colors.error + '20', false)}
+              background={TouchableNativeFeedback.Ripple('rgba(245,101,101,0.3)', false)}
               onPress={handleLogout}
             >
-              <View style={[styles.iconBtn, { backgroundColor: theme.colors.error + '15' }]}>
-                <Icon name="logout" size={20} color={theme.colors.error} />
+              <View style={[styles.iconBtn, { backgroundColor: 'rgba(245,101,101,0.15)', borderWidth: 1, borderColor: 'rgba(245,101,101,0.3)' }]}>
+                <Icon name="logout" size={20} color="#F56565" />
               </View>
             </TouchableNativeFeedback>
           ) : (
-            <TouchableOpacity onPress={handleLogout} style={[styles.iconBtn, { backgroundColor: theme.colors.error + '15' }]}>
-              <Icon name="logout" size={20} color={theme.colors.error} />
+            <TouchableOpacity onPress={handleLogout} style={[styles.iconBtn, { backgroundColor: 'rgba(245,101,101,0.15)', borderWidth: 1, borderColor: 'rgba(245,101,101,0.3)' }]}>
+              <Icon name="logout" size={20} color="#F56565" />
             </TouchableOpacity>
           )}
         </View>
-      </View>
+      </LinearGradient>
 
       {Platform.OS === 'web' && (
         <View style={[styles.webActionsBar, { borderBottomColor: theme.colors.border, backgroundColor: theme.colors.card }]}>          
@@ -525,36 +548,70 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         }}
         scrollEventThrottle={16}
       >
-        {/* Quick Actions */}
+        {/* Modern Quick Actions */}
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-            {language === 'vi' ? 'Hành Động Nhanh' : 'Quick Actions'}
+          <Text style={[styles.sectionTitle, { color: theme.colors.text, fontWeight: '800', fontSize: 24 }]}>
+            {language === 'vi' ? '⚡ Hành Động Nhanh' : '⚡ Quick Actions'}
           </Text>
                      <View style={styles.quickActions}>
              {Platform.OS === 'android' ? (
                <TouchableNativeFeedback
-                 background={TouchableNativeFeedback.Ripple(theme.colors.primary + '20', false)}
-                 onPress={() => setShowAgentSelector(true)}
+                background={TouchableNativeFeedback.Ripple('rgba(102,126,234,0.3)', false)}
+                 onPress={() => {
+                   // Navigate directly to ChatScreen for new general chat without agent selection
+                   navigation.navigate('Chat', { 
+                     generalChat: true,
+                     newChatTimestamp: Date.now()
+                   });
+                 }}
                >
-                 <View style={[styles.actionCard, { backgroundColor: theme.colors.surface }]}>
-                   <Icon name="smart-toy" size={32} color={theme.colors.primary} />
-                   <Text style={[styles.actionTitle, { color: theme.colors.text }]}>
-                     {language === 'vi' ? 'Tạo Agent' : 'Create Agent'}
+                <LinearGradient
+                  colors={theme.type === 'dark' 
+                    ? ['#8B5CF6', '#7C3AED', '#1F2937'] 
+                    : ['#667EEA', '#764BA2', '#FFFFFF']
+                  }
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={[styles.actionCard, { borderWidth: 0 }]}
+                >
+                  <View style={[styles.actionIconContainer, { backgroundColor: 'rgba(255,255,255,0.2)' }]}>
+                    <Icon name="chat" size={28} color="white" />
+                  </View>
+                  <Text style={[styles.actionTitle, { color: 'white', fontWeight: '700' }]}>
+                     {language === 'vi' ? 'Chat Mới' : 'New Chat'}
                    </Text>
-                   <Text style={[styles.actionSubtitle, { color: theme.colors.textSecondary }]}>
-                     {language === 'vi' ? 'Tạo hoặc chọn AI assistant' : 'Create or select AI assistant'}
+                  <Text style={[styles.actionSubtitle, { color: 'rgba(255,255,255,0.8)' }]}>
+                     {language === 'vi' ? 'Bắt đầu cuộc trò chuyện mới' : 'Start a new conversation'}
                    </Text>
-                 </View>
+                </LinearGradient>
                </TouchableNativeFeedback>
              ) : (
-               <TouchableOpacity style={[styles.actionCard, { backgroundColor: theme.colors.surface }]} onPress={() => setShowAgentSelector(true)}>
-                 <Icon name="smart-toy" size={32} color={theme.colors.primary} />
-                 <Text style={[styles.actionTitle, { color: theme.colors.text }]}>
-                   {language === 'vi' ? 'Tạo Agent' : 'Create Agent'}
+              <TouchableOpacity onPress={() => {
+                // Navigate directly to ChatScreen for new general chat without agent selection
+                navigation.navigate('Chat', { 
+                  generalChat: true,
+                  newChatTimestamp: Date.now()
+                });
+              }}>
+                <LinearGradient
+                  colors={theme.type === 'dark' 
+                    ? ['#8B5CF6', '#7C3AED', '#1F2937'] 
+                    : ['#667EEA', '#764BA2', '#FFFFFF']
+                  }
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={[styles.actionCard, { borderWidth: 0 }]}
+                >
+                  <View style={[styles.actionIconContainer, { backgroundColor: 'rgba(255,255,255,0.2)' }]}>
+                    <Icon name="chat" size={28} color="white" />
+                  </View>
+                  <Text style={[styles.actionTitle, { color: 'white', fontWeight: '700' }]}>
+                   {language === 'vi' ? 'Chat Mới' : 'New Chat'}
                  </Text>
-                 <Text style={[styles.actionSubtitle, { color: theme.colors.textSecondary }]}>
-                   {language === 'vi' ? 'Tạo hoặc chọn AI assistant' : 'Create or select AI assistant'}
+                  <Text style={[styles.actionSubtitle, { color: 'rgba(255,255,255,0.8)' }]}>
+                   {language === 'vi' ? 'Bắt đầu cuộc trò chuyện mới' : 'Start a new conversation'}
                  </Text>
+                </LinearGradient>
                </TouchableOpacity>
              )}
            </View>
@@ -568,13 +625,44 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
             {language === 'vi' ? 'Lịch Sử Chat' : 'Chat History'}
           </Text>
           {[...getConversationsByAgent(), ...getConversationsByChatbox(), ...getGeneralConversations()].length > 0 ? (
-            <FlatList
-              data={[...getConversationsByAgent(), ...getConversationsByChatbox(), ...getGeneralConversations()]}
-              keyExtractor={(item) => String('agentId' in item ? item.agentId : item.chatboxId)}
-              renderItem={renderConversationItem}
-              scrollEnabled={false}
-              showsVerticalScrollIndicator={false}
-            />
+            <View style={styles.chatHistoryContainer}>
+              {[...getConversationsByAgent(), ...getConversationsByChatbox(), ...getGeneralConversations()]
+                .slice(0, 5).map((conversation, index) => {
+                  const chatbox = ('chatboxId' in conversation && conversation.chatboxId && conversation.chatboxId > 0) ? allChatboxes.find(c => c.id === conversation.chatboxId) : null;
+                  const agent = ('agentId' in conversation && conversation.agentId) ? allAgents.find(a => a.id === conversation.agentId) : null;
+                  const latestMessage = conversation.latestMessage;
+                  
+                  return (
+                    <ChatHistoryCard
+                      key={`${('agentId' in conversation ? conversation.agentId : 'chatboxId' in conversation ? conversation.chatboxId : 'general')}-${index}-${refreshKey}`}
+                      chatboxId={'chatboxId' in conversation ? conversation.chatboxId : -1}
+                      agentName={
+                        agent ? agent.name :
+                        chatbox ? chatbox.name :
+                        language === 'vi' ? 'Chat Tổng Quát' : 'General Chat'
+                      }
+                      lastMessage={latestMessage.message}
+                      timestamp={'timestamp' in latestMessage ? (latestMessage.timestamp as string) : new Date().toISOString()}
+                      agentId={agent?.id || chatbox?.id || 0}
+                      onPress={() => {
+                        if ('agentId' in conversation && conversation.agentId) {
+                          handleConversationPress(conversation.agentId);
+                        } else if ('chatboxId' in conversation && conversation.chatboxId && conversation.chatboxId > 0) {
+                          handleChatboxConversationPress(conversation.chatboxId);
+                        } else {
+                          navigation.navigate('Chat', { 
+                            existingGeneralChat: true,
+                            existingChatTimestamp: Date.now()
+                          });
+                        }
+                      }}
+                      isActive={false}
+                      animated={true}
+                    />
+                  );
+                })
+              }
+            </View>
           ) : (
             <View style={[styles.emptyStateCard, { backgroundColor: theme.colors.surface }]}>
               <Icon name="chat-bubble-outline" size={48} color={theme.colors.textSecondary} />
@@ -590,40 +678,63 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
 
         {/* Available Agents */}
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-            {language === 'vi' ? 'Agents Có Sẵn' : 'Available Agents'}
+          <Text style={[styles.sectionTitle, { color: theme.colors.text, fontWeight: '800', fontSize: 24 }]}>
+            {language === 'vi' ? '🤖 Agents Có Sẵn' : '🤖 Available Agents'}
           </Text>
-          <View style={[styles.agentsCard, { backgroundColor: theme.colors.surface }]}>
-            <Text style={[styles.agentsInfo, { color: theme.colors.textSecondary }]}>
+          <Text style={[styles.sectionSubtitle, { color: theme.colors.textSecondary, marginBottom: 16 }]}>
               {language === 'vi' 
-                ? `Bạn có ${getUnchattedAgents().length} agents chưa thử nghiệm` 
-                : `You have ${getUnchattedAgents().length} agents to try`
+              ? `Bạn có ${allAgents.length} AI assistants đang chờ bạn khám phá` 
+              : `Discover your ${allAgents.length} AI assistants`
               }
             </Text>
-                         {Platform.OS === 'android' ? (
-               <TouchableNativeFeedback
-                 background={TouchableNativeFeedback.Ripple('rgba(255,255,255,0.3)', false)}
-                 onPress={() => setShowAgentSelector(true)}
-               >
-                 <View style={[styles.tryAgentsButton, { backgroundColor: theme.colors.primary }]}>
-                   <Icon name="smart-toy" size={20} color="white" />
-                   <Text style={[styles.tryAgentsButtonText, { color: 'white' }]}>
-                     {language === 'vi' ? 'Thử Nghiệm Agents' : 'Try Agents'}
-                   </Text>
-                 </View>
-               </TouchableNativeFeedback>
-             ) : (
+          
+          {/* Agent Cards Grid */}
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.agentsScrollContainer}
+          >
+            {allAgents.slice(0, 10).map((agent, index) => (
+              <AgentCard
+                key={agent.id}
+                agent={{
+                  id: agent.id,
+                  name: agent.name,
+                  description: '',
+                  is_online: Math.random() > 0.3, // Simulate random online status
+                  skills: [],
+                  personality: agent.personality || '',
+                }}
+                onPress={() => {
+                  navigation.navigate('Chat', { agent });
+                }}
+                isSelected={false}
+                animated={true}
+                compact={true}
+              />
+            ))}
+          </ScrollView>
+
+          {/* View All Agents Button */}
+          {allAgents.length > 10 && (
                <TouchableOpacity 
-                 style={[styles.tryAgentsButton, { backgroundColor: theme.colors.primary }]} 
+              style={[styles.viewAllButton, { backgroundColor: theme.colors.primary + '20', borderColor: theme.colors.primary }]}
                  onPress={() => setShowAgentSelector(true)}
                >
-                 <Icon name="smart-toy" size={20} color="white" />
-                 <Text style={[styles.tryAgentsButtonText, { color: 'white' }]}>
-                   {language === 'vi' ? 'Thử Nghiệm Agents' : 'Try Agents'}
+              <LinearGradient
+                colors={[theme.colors.primary, theme.colors.primary + 'DD'] as [string, string, ...string[]]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.viewAllGradient}
+              >
+                <Icon name="smart-toy" size={18} color="white" />
+                <Text style={styles.viewAllText}>
+                  {language === 'vi' ? 'Xem Tất Cả Agents' : 'View All Agents'}
                  </Text>
+                <Icon name="arrow-forward" size={18} color="white" />
+              </LinearGradient>
                </TouchableOpacity>
              )}
-          </View>
         </View>
       </ScrollView>
 
@@ -637,113 +748,183 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         </TouchableOpacity>
       )}
 
-      {/* FAQ Button - Bottom Right - Android Optimized */}
-      {Platform.OS === 'android' && (
-        <TouchableOpacity
-          onPress={() => setShowFAQ(true)}
-          style={[styles.faqButtonAndroid, { backgroundColor: theme.colors.primary }]}
-          activeOpacity={0.7}
-        >
-          <Icon name="help-outline" size={28} color="white" />
-        </TouchableOpacity>
-      )}
+      {/* Floating Action Buttons */}
+      <FloatingActionButton
+        icon="add"
+          onPress={() => {
+            // Navigate directly to ChatScreen for new general chat without agent selection
+            navigation.navigate('Chat', { 
+              generalChat: true,
+              newChatTimestamp: Date.now()
+            });
+          }}
+        position="bottom-right"
+        primary={true}
+        elevation={12}
+      />
+      
+      {/* FAQ Button - Bottom Left */}
+      <FloatingActionButton
+        icon="help-outline"
+        onPress={() => setShowFAQ(true)}
+        position="bottom-left"
+        secondary={true}
+        size="small"
+        elevation={10}
+      />
 
-      {/* FAQ Modal - Android Optimized */}
-      {showFAQ && Platform.OS === 'android' && (
-        <View style={styles.faqModalOverlayAndroid}>
-          <View style={[styles.faqModalAndroid, { backgroundColor: theme.colors.surface }]}>
-            {/* Android-style Header */}
-            <View style={[styles.faqHeaderAndroid, { borderBottomColor: theme.colors.border }]}>
-              <View style={styles.faqHeaderContent}>
-                <Icon name="help-outline" size={24} color={theme.colors.primary} />
-                <Text style={[styles.faqTitleAndroid, { color: theme.colors.text }]}>
-                  {language === 'vi' ? 'Hướng Dẫn Sử Dụng' : 'Manual Instructions'}
+      {/* Language Selector Modal */}
+      <LanguageSelector 
+        visible={showLanguageSelector}
+        onClose={() => setShowLanguageSelector(false)}
+      />
+
+      {/* FAQ Modal for Newbies */}
+      <Modal
+        visible={showFAQ}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowFAQ(false)}
+      >
+        <View style={styles.faqModalOverlay}>
+          <View style={[styles.faqModal, { backgroundColor: theme.colors.surface }]}>
+            {/* Header */}
+            <View style={[styles.faqHeader, { borderBottomColor: theme.colors.border }]}>
+              <View style={styles.faqHeaderContentNew}>
+                <Icon name="school" size={24} color={theme.colors.primary} />
+                <Text style={[styles.faqTitle, { color: theme.colors.text }]}>
+                  {language === 'vi' ? 'Hướng Dẫn Cho Người Mới' : 'Beginner\'s Guide'}
                 </Text>
               </View>
               <TouchableOpacity
                 onPress={() => setShowFAQ(false)}
-                style={[styles.faqCloseButtonAndroid, { backgroundColor: theme.colors.surface }]}
+                style={styles.faqCloseButton}
                 activeOpacity={0.7}
               >
                 <Icon name="close" size={20} color={theme.colors.textSecondary} />
               </TouchableOpacity>
             </View>
             
-            {/* Android-style Content */}
+            {/* Content */}
             <ScrollView 
-              style={styles.faqContentAndroid} 
+              style={styles.faqContent} 
               showsVerticalScrollIndicator={true}
-              indicatorStyle="dark"
+              indicatorStyle={theme.type === 'dark' ? 'white' : 'black'}
             >
-              {/* Creating Conversations Section */}
-              <View style={styles.faqSectionAndroid}>
-                <View style={styles.faqSectionHeader}>
-                  <Icon name="add-circle-outline" size={20} color={theme.colors.primary} />
-                  <Text style={[styles.faqSectionTitleAndroid, { color: theme.colors.text }]}>
-                    {language === 'vi' ? 'Tạo Cuộc Trò Chuyện Mới' : 'Creating New Conversations'}
+              {/* Getting Started Section */}
+              <View style={styles.faqSection}>
+                <View style={styles.faqSectionHeaderNew}>
+                  <Icon name="play-circle-outline" size={20} color={theme.colors.primary} />
+                  <Text style={[styles.faqSectionTitle, { color: theme.colors.text }]}>
+                    {language === 'vi' ? 'Bắt Đầu Sử Dụng' : 'Getting Started'}
                   </Text>
                 </View>
-                <View style={styles.faqBulletList}>
-                  <View style={styles.faqBulletItem}>
-                    <Text style={styles.faqBullet}>•</Text>
-                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                <View style={styles.faqSteps}>
+                  <View style={styles.faqStep}>
+                    <View style={[styles.stepNumber, { backgroundColor: theme.colors.primary }]}>
+                      <Text style={styles.stepNumberText}>1</Text>
+                    </View>
+                    <Text style={[styles.faqStepText, { color: theme.colors.textSecondary }]}>
                       {language === 'vi' 
-                        ? 'Nhấn nút "+" ở góc trên bên phải để tạo cuộc trò chuyện mới'
-                        : 'Tap the "+" button in the top right corner to create a new conversation'
+                        ? 'Nhấn nút "+" ở góc dưới bên phải hoặc nút "Chat Mới" để bắt đầu cuộc trò chuyện mới'
+                        : 'Tap the "+" button in the bottom right corner or "New Chat" button to start a new conversation'
                       }
                     </Text>
                   </View>
-                  <View style={styles.faqBulletItem}>
-                    <Text style={styles.faqBullet}>•</Text>
-                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                  <View style={styles.faqStep}>
+                    <View style={[styles.stepNumber, { backgroundColor: theme.colors.primary }]}>
+                      <Text style={styles.stepNumberText}>2</Text>
+                    </View>
+                    <Text style={[styles.faqStepText, { color: theme.colors.textSecondary }]}>
                       {language === 'vi' 
-                        ? 'Chọn agent từ danh sách có sẵn'
-                        : 'Select an agent from the available list'
+                        ? 'Tùy chọn: Chọn một AI Assistant từ danh sách có sẵn hoặc tiếp tục với chat tổng quát'
+                        : 'Optional: Choose an AI Assistant from the available list or continue with general chat'
                       }
                     </Text>
                   </View>
-                  <View style={styles.faqBulletItem}>
-                    <Text style={styles.faqBullet}>•</Text>
-                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                  <View style={styles.faqStep}>
+                    <View style={[styles.stepNumber, { backgroundColor: theme.colors.primary }]}>
+                      <Text style={styles.stepNumberText}>3</Text>
+                    </View>
+                    <Text style={[styles.faqStepText, { color: theme.colors.textSecondary }]}>
                       {language === 'vi' 
-                        ? 'Bắt đầu trò chuyện với agent đã chọn'
-                        : 'Start chatting with your chosen agent'
+                        ? 'Bắt đầu trò chuyện bằng cách gõ tin nhắn'
+                        : 'Start chatting by typing your message'
                       }
                     </Text>
                   </View>
                 </View>
               </View>
 
-              {/* Managing Chat History Section */}
-              <View style={styles.faqSectionAndroid}>
-                <View style={styles.faqSectionHeader}>
-                  <Icon name="history" size={20} color={theme.colors.primary} />
-                  <Text style={[styles.faqSectionTitleAndroid, { color: theme.colors.text }]}>
-                    {language === 'vi' ? 'Quản Lý Lịch Sử Chat' : 'Managing Chat History'}
+              {/* Understanding AI Assistants */}
+              <View style={styles.faqSection}>
+                <View style={styles.faqSectionHeaderNew}>
+                  <Icon name="smart-toy" size={20} color={theme.colors.primary} />
+                  <Text style={[styles.faqSectionTitle, { color: theme.colors.text }]}>
+                    {language === 'vi' ? 'Hiểu Về AI Assistants' : 'Understanding AI Assistants'}
                   </Text>
                 </View>
-                <View style={styles.faqBulletList}>
-                  <View style={styles.faqBulletItem}>
-                    <Text style={styles.faqBullet}>•</Text>
-                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                <View style={styles.faqBulletListNew}>
+                  <View style={styles.faqBulletItemNew}>
+                    <Text style={styles.faqBulletNew}>🤖</Text>
+                    <Text style={[styles.faqText, { color: theme.colors.textSecondary }]}>
                       {language === 'vi' 
-                        ? 'Lịch sử chat được cập nhật tự động khi bạn quay lại màn hình chính'
-                        : 'Chat history updates automatically when you return to the home screen'
+                        ? 'Mỗi AI Assistant có tính cách và phong cách trả lời riêng'
+                        : 'Each AI Assistant has its own personality and response style'
                       }
                     </Text>
                   </View>
-                  <View style={styles.faqBulletItem}>
-                    <Text style={styles.faqBullet}>•</Text>
-                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                  <View style={styles.faqBulletItemNew}>
+                    <Text style={styles.faqBulletNew}>💬</Text>
+                    <Text style={[styles.faqText, { color: theme.colors.textSecondary }]}>
                       {language === 'vi' 
-                        ? 'Nhấn vào cuộc trò chuyện để tiếp tục chat với agent'
-                        : 'Tap on a conversation to continue chatting with that agent'
+                        ? 'Bạn có thể tạo AI Assistant tùy chỉnh với tính cách riêng'
+                        : 'You can create custom AI Assistants with unique personalities'
                       }
                     </Text>
                   </View>
-                  <View style={styles.faqBulletItem}>
-                    <Text style={styles.faqBullet}>•</Text>
-                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                  <View style={styles.faqBulletItemNew}>
+                    <Text style={styles.faqBulletNew}>🔄</Text>
+                    <Text style={[styles.faqText, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' 
+                        ? 'Chỉnh sửa AI Assistant sau khi đã trò chuyện với chúng'
+                        : 'Edit AI Assistants after chatting with them'
+                      }
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Managing Conversations */}
+              <View style={styles.faqSection}>
+                <View style={styles.faqSectionHeaderNew}>
+                  <Icon name="history" size={20} color={theme.colors.primary} />
+                  <Text style={[styles.faqSectionTitle, { color: theme.colors.text }]}>
+                    {language === 'vi' ? 'Quản Lý Cuộc Trò Chuyện' : 'Managing Conversations'}
+                  </Text>
+                </View>
+                <View style={styles.faqBulletListNew}>
+                  <View style={styles.faqBulletItemNew}>
+                    <Text style={styles.faqBulletNew}>📝</Text>
+                    <Text style={[styles.faqText, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' 
+                        ? 'Tất cả cuộc trò chuyện được lưu tự động'
+                        : 'All conversations are saved automatically'
+                      }
+                    </Text>
+                  </View>
+                  <View style={styles.faqBulletItemNew}>
+                    <Text style={styles.faqBulletNew}>👆</Text>
+                    <Text style={[styles.faqText, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' 
+                        ? 'Nhấn vào cuộc trò chuyện để tiếp tục'
+                        : 'Tap on a conversation to continue'
+                      }
+                    </Text>
+                  </View>
+                  <View style={styles.faqBulletItemNew}>
+                    <Text style={styles.faqBulletNew}>🗑️</Text>
+                    <Text style={[styles.faqText, { color: theme.colors.textSecondary }]}>
                       {language === 'vi' 
                         ? 'Xóa cuộc trò chuyện bằng nút thùng rác'
                         : 'Delete conversations using the trash button'
@@ -753,87 +934,39 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
                 </View>
               </View>
 
-              {/* Customizing Agents Section */}
-              <View style={styles.faqSectionAndroid}>
-                <View style={styles.faqSectionHeader}>
-                  <Icon name="smart-toy" size={20} color={theme.colors.primary} />
-                  <Text style={[styles.faqSectionTitleAndroid, { color: theme.colors.text }]}>
-                    {language === 'vi' ? 'Tùy Chỉnh Agent' : 'Customizing Agents'}
+              {/* Tips for Better Experience */}
+              <View style={styles.faqSection}>
+                <View style={styles.faqSectionHeaderNew}>
+                  <Icon name="lightbulb-outline" size={20} color={theme.colors.primary} />
+                  <Text style={[styles.faqSectionTitle, { color: theme.colors.text }]}>
+                    {language === 'vi' ? 'Mẹo Sử Dụng Hiệu Quả' : 'Tips for Better Experience'}
                   </Text>
                 </View>
-                <View style={styles.faqBulletList}>
-                  <View style={styles.faqBulletItem}>
-                    <Text style={styles.faqBullet}>•</Text>
-                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                <View style={styles.faqBulletListNew}>
+                  <View style={styles.faqBulletItemNew}>
+                    <Text style={styles.faqBulletNew}>💡</Text>
+                    <Text style={[styles.faqText, { color: theme.colors.textSecondary }]}>
                       {language === 'vi' 
-                        ? 'Tạo agent tùy chỉnh với tính cách và phong cách riêng'
-                        : 'Create custom agents with unique personalities and response styles'
+                        ? 'Hãy cụ thể trong câu hỏi để nhận được câu trả lời tốt hơn'
+                        : 'Be specific in your questions for better answers'
                       }
                     </Text>
                   </View>
-                  <View style={styles.faqBulletItem}>
-                    <Text style={styles.faqBullet}>•</Text>
-                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                  <View style={styles.faqBulletItemNew}>
+                    <Text style={styles.faqBulletNew}>🌐</Text>
+                    <Text style={[styles.faqText, { color: theme.colors.textSecondary }]}>
                       {language === 'vi' 
-                        ? 'Chỉnh sửa agent hiện có từ menu agent'
-                        : 'Edit existing agents from the agent menu'
+                        ? 'Thay đổi ngôn ngữ bằng nút ngôn ngữ ở góc trên'
+                        : 'Change language using the language button in the top corner'
                       }
                     </Text>
                   </View>
-                  <View style={styles.faqBulletItem}>
-                    <Text style={styles.faqBullet}>•</Text>
-                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
+                  <View style={styles.faqBulletItemNew}>
+                    <Text style={styles.faqBulletNew}>⚡</Text>
+                    <Text style={[styles.faqText, { color: theme.colors.textSecondary }]}>
                       {language === 'vi' 
-                        ? 'Mỗi agent có thể có phong cách trả lời khác nhau'
-                        : 'Each agent can have different response styles'
-                      }
-                    </Text>
-                  </View>
-                </View>
-              </View>
-
-              {/* Other Features Section */}
-              <View style={styles.faqSectionAndroid}>
-                <View style={styles.faqSectionHeader}>
-                  <Icon name="settings" size={20} color={theme.colors.primary} />
-                  <Text style={[styles.faqSectionTitleAndroid, { color: theme.colors.text }]}>
-                    {language === 'vi' ? 'Tính Năng Khác' : 'Other Features'}
-                  </Text>
-                </View>
-                <View style={styles.faqBulletList}>
-                  <View style={styles.faqBulletItem}>
-                    <Text style={styles.faqBullet}>•</Text>
-                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
-                      {language === 'vi' 
-                        ? 'Thay đổi ngôn ngữ từ menu cài đặt'
-                        : 'Change language from settings menu'
-                      }
-                    </Text>
-                  </View>
-                  <View style={styles.faqBulletItem}>
-                    <Text style={styles.faqBullet}>•</Text>
-                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
-                      {language === 'vi' 
-                        ? 'Kiểm tra trạng thái kết nối API'
-                        : 'Check API connection status'
-                      }
-                    </Text>
-                  </View>
-                  <View style={styles.faqBulletItem}>
-                    <Text style={styles.faqBullet}>•</Text>
-                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
-                      {language === 'vi' 
-                        ? 'Xóa cache để làm mới dữ liệu'
-                        : 'Clear cache to refresh data'
-                      }
-                    </Text>
-                  </View>
-                  <View style={styles.faqBulletItem}>
-                    <Text style={styles.faqBullet}>•</Text>
-                    <Text style={[styles.faqTextAndroid, { color: theme.colors.textSecondary }]}>
-                      {language === 'vi' 
-                        ? 'Import file để xử lý nội dung'
-                        : 'Import files to process content'
+                        ? 'Kiểm tra trạng thái kết nối bằng đèn xanh ở góc trên'
+                        : 'Check connection status with the green light in the top corner'
                       }
                     </Text>
                   </View>
@@ -842,13 +975,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
             </ScrollView>
           </View>
         </View>
-      )}
-
-      {/* Language Selector Modal */}
-      <LanguageSelector 
-        visible={showLanguageSelector}
-        onClose={() => setShowLanguageSelector(false)}
-      />
+      </Modal>
 
       {/* Agent Selector Modal */}
       <AgentSelector
@@ -957,15 +1084,31 @@ const styles = StyleSheet.create({
   actionCard: { 
     width: '100%', 
     maxWidth: Platform.OS === 'android' ? screenWidth - 80 : 300, 
-    padding: Platform.OS === 'android' ? 24 : 20, 
-    borderRadius: Platform.OS === 'android' ? 16 : 12, 
+    padding: Platform.OS === 'android' ? 28 : 24, 
+    borderRadius: Platform.OS === 'android' ? 20 : 16, 
     alignItems: 'center', 
-    elevation: Platform.OS === 'android' ? 6 : 2, 
+    elevation: Platform.OS === 'android' ? 12 : 8, 
+    shadowColor: '#8B5CF6', 
+    shadowOffset: { width: 0, height: Platform.OS === 'android' ? 8 : 6 }, 
+    shadowOpacity: Platform.OS === 'android' ? 0.25 : 0.2, 
+    shadowRadius: Platform.OS === 'android' ? 16 : 12,
+    minHeight: Platform.OS === 'android' ? 140 : 120,
+    borderWidth: 0.3,
+    borderColor: 'rgba(139, 92, 246, 0.03)',
+  },
+  actionIconContainer: {
+    width: Platform.OS === 'android' ? 64 : 56,
+    height: Platform.OS === 'android' ? 64 : 56,
+    borderRadius: Platform.OS === 'android' ? 32 : 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: Platform.OS === 'android' ? 16 : 12,
+    elevation: Platform.OS === 'android' ? 4 : 2,
     shadowColor: '#000', 
-    shadowOffset: { width: 0, height: Platform.OS === 'android' ? 4 : 2 }, 
+    shadowOffset: { width: 0, height: Platform.OS === 'android' ? 2 : 1 },
     shadowOpacity: Platform.OS === 'android' ? 0.15 : 0.1, 
-    shadowRadius: Platform.OS === 'android' ? 8 : 4,
-    minHeight: Platform.OS === 'android' ? 120 : 100
+
+    shadowRadius: Platform.OS === 'android' ? 4 : 2,
   },
   actionTitle: { 
     fontSize: Platform.OS === 'android' ? 18 : 16, 
@@ -1246,6 +1389,148 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     flex: 1,
     letterSpacing: 0.2,
+  },
+  
+  // FAQ Modal Styles for Newbies
+  faqModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  faqModal: {
+    width: '100%',
+    maxHeight: '80%',
+    borderRadius: 20,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+  },
+  faqHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+  },
+  faqHeaderContentNew: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  faqTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    marginLeft: 12,
+  },
+  faqCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  faqContent: {
+    padding: 20,
+  },
+  faqSection: {
+    marginBottom: 24,
+  },
+  faqSectionHeaderNew: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  faqSectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  faqSteps: {
+    paddingLeft: 8,
+  },
+  faqStep: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+  },
+  stepNumber: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+    marginTop: 2,
+  },
+  stepNumberText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  faqStepText: {
+    fontSize: 15,
+    lineHeight: 22,
+    flex: 1,
+  },
+  faqBulletListNew: {
+    paddingLeft: 8,
+  },
+  faqBulletItemNew: {
+    flexDirection: 'row',
+    marginBottom: 12,
+    alignItems: 'flex-start',
+  },
+  faqBulletNew: {
+    fontSize: 16,
+    marginRight: 12,
+    marginTop: 2,
+  },
+  faqText: {
+    fontSize: 15,
+    lineHeight: 22,
+    flex: 1,
+  },
+  
+  // Modern HomeScreen Styles
+  chatHistoryContainer: {
+    flex: 1,
+  },
+  sectionSubtitle: {
+    fontSize: 16,
+    marginBottom: 16,
+    opacity: 0.8,
+  },
+  agentsScrollContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  viewAllButton: {
+    borderRadius: 16,
+    marginTop: 16,
+    borderWidth: 1,
+    overflow: 'hidden',
+    elevation: Platform.OS === 'android' ? 6 : 0,
+    shadowColor: '#667EEA',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+  },
+  viewAllGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+  },
+  viewAllText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: 'white',
+    marginHorizontal: 8,
   },
 });
 

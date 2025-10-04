@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, TextInput, TextInputProps, StyleSheet } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import { LinearGradient } from 'expo-linear-gradient';
 
 interface FormInputProps extends TextInputProps {
   label: string;
@@ -39,9 +40,17 @@ export const FormInput: React.FC<FormInputProps> = ({
       <Text style={[styles.inputLabel, { color: theme.colors.text }]}>
         {label}
       </Text>
-      <View style={styles.inputContainer}>
+      <LinearGradient
+        colors={theme.type === 'dark' 
+          ? ['rgba(255,255,255,0.05)', 'rgba(255,255,255,0.02)'] as [string, string, ...string[]]
+          : ['rgba(255,255,255,0.8)', 'rgba(247,250,252,0.9)'] as [string, string, ...string[]]
+        }
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={[styles.inputContainer, { borderColor: getBorderColor(), borderWidth: 2 }]}
+      >
         {leftIcon && (
-          <View style={[styles.leftIconContainer, { backgroundColor: theme.colors.primary + '15' }]}>
+          <View style={[styles.leftIconContainer, { backgroundColor: 'rgba(255,255,255,0.1)' }]}>
             <Icon name={leftIcon} size={20} color={theme.colors.primary} />
           </View>
         )}
@@ -49,8 +58,8 @@ export const FormInput: React.FC<FormInputProps> = ({
           style={[
             styles.authInput,
             {
-              backgroundColor: getInputBackgroundColor(),
-              borderColor: getBorderColor(),
+              backgroundColor: 'transparent',
+              borderColor: 'transparent', // Gradient handles the border
               color: theme.colors.inputText,
               paddingLeft: leftIcon ? 48 : 16,
             },
@@ -64,7 +73,7 @@ export const FormInput: React.FC<FormInputProps> = ({
             <Text style={styles.validationIconText}>✓</Text>
           </View>
         )}
-      </View>
+      </LinearGradient>
       {error && (
         <Text style={[styles.errorText, { color: theme.colors.error || '#ff4444' }]}>
           {error}

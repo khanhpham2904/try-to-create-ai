@@ -105,7 +105,7 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
     setLoading(true);
     setIsOffline(false);
     try {
-      const response = await apiService.getUnchattedAgents(userId);
+      const response = await apiService.getUnchattedAgents(userId!);
       if (response.status === 200 && Array.isArray(response.data) && response.data.length > 0) {
         setAgents(response.data);
       } else {
@@ -309,10 +309,10 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
   };
 
   const getAgentColor = (agentName: string) => {
-    if (agentName.includes('Alex')) return '#FF6B6B';
-    if (agentName.includes('Dr. Sarah')) return '#4ECDC4';
-    if (agentName.includes('Max')) return '#45B7D1';
-    if (agentName.includes('Emma')) return '#96CEB4';
+    if (agentName.includes('Alex')) return theme.colors.error; // Red for friendly
+    if (agentName.includes('Dr. Sarah')) return theme.colors.info; // Blue for professional
+    if (agentName.includes('Max')) return theme.colors.warning; // Orange for creative
+    if (agentName.includes('Emma')) return theme.colors.success; // Green for teacher
     return theme.colors.primary;
   };
 
@@ -418,6 +418,15 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
       alignItems: 'center',
       gap: 12,
       flexShrink: 0, // Prevents buttons from shrinking
+    },
+    closeButton: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: 'transparent',
+      justifyContent: 'center',
+      alignItems: 'center',
+      borderWidth: 0,
     },
     headerActionBtn: {
       width: 44,
@@ -531,9 +540,9 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
       borderTopWidth: 1,
       borderTopColor: theme.colors.border + '40',
       backgroundColor: theme.colors.surface,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
+      flexDirection: 'column',
+      alignItems: 'stretch',
+      gap: 12,
     },
     footerActions: {
       flexDirection: 'row',
@@ -555,8 +564,6 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
       shadowOffset: { width: 0, height: 2 },
       shadowOpacity: 0.08,
       shadowRadius: 4,
-      flex: 1,
-      marginLeft: 12,
     },
     clearButtonText: { 
       color: theme.colors.textSecondary, 
@@ -585,16 +592,13 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
       justifyContent: 'center',
       alignItems: 'center',
       marginLeft: 12,
-      // Remove elevation for Android to avoid border-like shadow
       elevation: 0,
-      // Use shadowColor/shadowOffset for iOS only
       shadowColor: '#000',
       shadowOffset: { width: 0, height: 1 },
       shadowOpacity: 0.05,
       shadowRadius: 2,
       borderWidth: 0,
-      // Clean modern background
-      backgroundColor: 'rgba(255, 255, 255, 0.95)',
+      backgroundColor: theme.colors.surface,
     },
     deleteButton: {
       width: 48,
@@ -603,16 +607,13 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
       justifyContent: 'center',
       alignItems: 'center',
       marginLeft: 12,
-      // Remove elevation for Android to avoid border-like shadow
       elevation: 0,
-      // Use shadowColor/shadowOffset for iOS only
       shadowColor: '#000',
       shadowOffset: { width: 0, height: 1 },
       shadowOpacity: 0.05,
       shadowRadius: 2,
       borderWidth: 0,
-      // Clean modern background
-      backgroundColor: 'rgba(255, 255, 255, 0.95)',
+      backgroundColor: theme.colors.surface,
     },
     deleteIndicator: {
       position: 'absolute',
@@ -663,16 +664,6 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
       borderColor: theme.colors.primary,
       elevation: 3,
       shadowColor: theme.colors.primary + '30',
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.2,
-      shadowRadius: 8,
-    },
-    closeButton: {
-      backgroundColor: theme.colors.error,
-      borderWidth: 1,
-      borderColor: theme.colors.error,
-      elevation: 3,
-      shadowColor: theme.colors.error + '30',
       shadowOffset: { width: 0, height: 4 },
       shadowOpacity: 0.2,
       shadowRadius: 8,
@@ -759,18 +750,18 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
             <TouchableOpacity
               style={[
                 styles.editButton,
-                { backgroundColor: 'rgba(13, 110, 253, 0.08)' }
+                { backgroundColor: theme.colors.info + '15' }
               ]}
               onPress={() => handleEditAgent(item)}
             >
-              <Icon name="edit" size={20} color="#0d6efd" />
+              <Icon name="edit" size={20} color={theme.colors.info} />
             </TouchableOpacity>
           ) : (
             <View style={[
               styles.editButton,
-              { backgroundColor: 'rgba(108, 117, 125, 0.08)' }
+              { backgroundColor: theme.colors.textTertiary + '15' }
             ]}>
-              <Icon name="lock" size={20} color="#6c757d" />
+              <Icon name="lock" size={20} color={theme.colors.textTertiary} />
             </View>
           )}
           
@@ -779,11 +770,11 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
             <TouchableOpacity
               style={[
                 styles.deleteButton,
-                { backgroundColor: 'rgba(220, 53, 69, 0.08)' }
+                { backgroundColor: theme.colors.error + '15' }
               ]}
               onPress={() => handleDeleteAgent(item)}
             >
-              <Icon name="delete" size={20} color="#dc3545" />
+              <Icon name="delete" size={20} color={theme.colors.error} />
             </TouchableOpacity>
           )}
         </View>
@@ -816,12 +807,13 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
       transparent={false}
       animationType="slide"
       onRequestClose={onClose}
+      statusBarTranslucent={false}
     >
       <StatusBar 
         backgroundColor={theme.colors.surface}
         barStyle={theme.type === 'dark' ? 'light-content' : 'dark-content'}
         translucent={false}
-        animated={true}
+        animated={false}
       />
       <SafeAreaView style={styles.modalOverlay}>
         <View style={styles.modalContent}>
@@ -830,19 +822,25 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <View style={styles.headerIcon}>
-                <Icon name="smart-toy" size={20} color={theme.colors.primary} />
+                <Icon name="smart-toy" size={24} color={theme.colors.primary} />
               </View>
               <View style={styles.headerTextContainer}>
-                <Text style={styles.title}>Choose Your AI Assistant</Text>
+                <Text style={styles.title}>🤖 Choose Your AI Assistant</Text>
                 <Text style={styles.subtitle}>
                   {unchattedAgents.length > 0 
                     ? `${unchattedAgents.length} agents available to try` 
                     : 'All agents have been tried'
                   }
-                  {userId && ' • Chat with agents to customize them • Long-press custom agents to delete'}
                 </Text>
               </View>
             </View>
+            <TouchableOpacity 
+              style={styles.closeButton} 
+              onPress={onClose}
+              activeOpacity={0.6}
+            >
+              <Icon name="close" size={20} color={theme.colors.textTertiary} />
+            </TouchableOpacity>
           </View>
 
           <FlatList
@@ -882,20 +880,15 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
           )}
 
           <View style={styles.footer}>
-            <View style={styles.footerActions}>
-              <TouchableOpacity style={[styles.headerActionBtn, styles.createButton]} onPress={handleCreateCustomAgent}>
-                <Icon name="add" size={20} color={theme.colors.surface} />
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.headerActionBtn, styles.reloadButton]} onPress={onRefresh}>
-                <Icon name="refresh" size={20} color={theme.colors.surface} />
-              </TouchableOpacity>
-            </View>
-            <TouchableOpacity style={[styles.headerActionBtn, styles.closeButton]} onPress={onClose}>
-              <Icon name="close" size={20} color={theme.colors.surface} />
+            <TouchableOpacity style={styles.createAgentButton} onPress={handleCreateCustomAgent}>
+              <Icon name="add" size={20} color="white" />
+              <Text style={styles.createAgentButtonText}>Create Custom Agent</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.clearButton} onPress={handleClearSelection} disabled={!selectedAgent}>
-              <Text style={styles.clearButtonText}>{selectedAgent ? 'Clear Selection' : 'No Assistant Selected'}</Text>
-            </TouchableOpacity>
+            {selectedAgent && (
+              <TouchableOpacity style={styles.clearButton} onPress={handleClearSelection}>
+                <Text style={styles.clearButtonText}>Clear Selection</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </SafeAreaView>

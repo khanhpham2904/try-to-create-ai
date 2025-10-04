@@ -70,34 +70,89 @@ export interface Theme {
 const lightTheme: Theme = {
   type: 'light',
   colors: {
-    primary: '#6366F1',
-    primaryLight: '#818CF8',
-    primaryDark: '#4F46E5',
+    primary: '#667EEA',
+    primaryLight: '#764BA2',
+    primaryDark: '#5A67D8',
     
-    background: '#F8FAFC',
+    background: '#FAFAFA',
     surface: '#FFFFFF',
     card: '#FFFFFF',
     
-    text: '#1E293B',
-    textSecondary: '#64748B',
-    textTertiary: '#94A3B8',
+    text: '#1A202C',
+    textSecondary: '#718096',
+    textTertiary: '#A0AEC0',
     
     border: '#E2E8F0',
-    borderLight: '#F1F5F9',
+    borderLight: '#F7FAFC',
     
-    userMessage: '#6366F1',
-    botMessage: '#FFFFFF',
+    userMessage: '#667EEA',
+    botMessage: '#F7FAFC',
     userMessageText: '#FFFFFF',
-    botMessageText: '#1E293B',
+    botMessageText: '#1A202C',
     
-    success: '#10B981',
-    warning: '#F59E0B',
-    error: '#EF4444',
-    info: '#3B82F6',
+    success: '#48BB78',
+    warning: '#ED8936',
+    error: '#F56565',
+    info: '#4299E1',
     
-    inputBackground: '#F8FAFC',
+    inputBackground: '#FFFFFF',
     inputBorder: '#E2E8F0',
-    inputText: '#1E293B',
+    inputText: '#1A202C',
+    inputPlaceholder: '#A0AEC0',
+  },
+  fonts: {
+    regular: 'System',
+    medium: 'System',
+    semiBold: 'System',
+    bold: 'System',
+  },
+  spacing: {
+    xs: 4,
+    sm: 8,
+    md: 16,
+    lg: 24,
+    xl: 32,
+    xxl: 48,
+  },
+  borderRadius: {
+    sm: 12,
+    md: 16,
+    lg: 20,
+    xl: 28,
+  },
+};
+
+const darkTheme: Theme = {
+  type: 'dark',
+  colors: {
+    primary: '#8B5CF6', // Modern purple
+    primaryLight: '#A78BFA',
+    primaryDark: '#7C3AED',
+    
+    background: '#0A0A0F', // Deeper black
+    surface: '#111827', // Dark gray
+    card: '#1F2937', // Slightly lighter gray
+    
+    text: '#F9FAFB', // Pure white
+    textSecondary: '#D1D5DB', // Light gray
+    textTertiary: '#9CA3AF', // Medium gray
+    
+    border: '#374151', // Dark border
+    borderLight: '#4B5563', // Lighter border
+    
+    userMessage: '#8B5CF6', // Purple for user messages
+    botMessage: '#1F2937', // Dark surface for bot messages
+    userMessageText: '#FFFFFF',
+    botMessageText: '#F9FAFB',
+    
+    success: '#10B981', // Modern green
+    warning: '#F59E0B', // Modern orange
+    error: '#EF4444', // Modern red
+    info: '#3B82F6', // Modern blue
+    
+    inputBackground: '#1F2937',
+    inputBorder: '#374151',
+    inputText: '#F9FAFB',
     inputPlaceholder: '#9CA3AF',
   },
   fonts: {
@@ -115,65 +170,10 @@ const lightTheme: Theme = {
     xxl: 48,
   },
   borderRadius: {
-    sm: 8,
-    md: 12,
-    lg: 16,
-    xl: 24,
-  },
-};
-
-const darkTheme: Theme = {
-  type: 'dark',
-  colors: {
-    primary: '#818CF8',
-    primaryLight: '#A5B4FC',
-    primaryDark: '#6366F1',
-    
-    background: '#0F172A',
-    surface: '#1E293B',
-    card: '#1E293B',
-    
-    text: '#F8FAFC',
-    textSecondary: '#CBD5E1',
-    textTertiary: '#94A3B8',
-    
-    border: '#334155',
-    borderLight: '#475569',
-    
-    userMessage: '#818CF8',
-    botMessage: '#334155',
-    userMessageText: '#FFFFFF',
-    botMessageText: '#F8FAFC',
-    
-    success: '#34D399',
-    warning: '#FBBF24',
-    error: '#F87171',
-    info: '#60A5FA',
-    
-    inputBackground: '#1E293B',
-    inputBorder: '#334155',
-    inputText: '#F8FAFC',
-    inputPlaceholder: '#64748B',
-  },
-  fonts: {
-    regular: 'System',
-    medium: 'System',
-    semiBold: 'System',
-    bold: 'System',
-  },
-  spacing: {
-    xs: 4,
-    sm: 8,
+    sm: 12,
     md: 16,
-    lg: 24,
-    xl: 32,
-    xxl: 48,
-  },
-  borderRadius: {
-    sm: 8,
-    md: 12,
-    lg: 16,
-    xl: 24,
+    lg: 20,
+    xl: 28,
   },
 };
 

@@ -1,9 +1,8 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  Animated,
   TouchableOpacity,
   Platform,
 } from 'react-native';
@@ -27,8 +26,6 @@ export const AnimatedStatusIndicator: React.FC<AnimatedStatusIndicatorProps> = (
   size = 'medium',
 }) => {
   const { theme } = useTheme();
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-  const pulseOpacity = useRef(new Animated.Value(1)).current;
 
   const getStatusConfig = () => {
     switch (status) {
@@ -73,46 +70,8 @@ export const AnimatedStatusIndicator: React.FC<AnimatedStatusIndicatorProps> = (
   const statusConfig = getStatusConfig();
 
   useEffect(() => {
-    if (animated && (status === 'online' || status === 'connecting')) {
-      const pulseAnimation = Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, {
-            toValue: 1.2,
-            duration: 1000,
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulseAnim, {
-            toValue: 1,
-            duration: 1000,
-            useNativeDriver: true,
-          }),
-        ])
-      );
-
-      const opacityAnimation = Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseOpacity, {
-            toValue: 0.6,
-            duration: 1000,
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulseOpacity, {
-            toValue: 1,
-            duration: 1000,
-            useNativeDriver: true,
-          }),
-        ])
-      );
-
-      pulseAnimation.start();
-      opacityAnimation.start();
-
-      return () => {
-        pulseAnimation.stop();
-        opacityAnimation.stop();
-      };
-    }
-  }, [status, animated, pulseAnim, pulseOpacity]);
+    // Animation removed - keeping static display
+  }, [status, animated]);
 
   const getSizeStyles = () => {
     switch (size) {
@@ -174,15 +133,7 @@ export const AnimatedStatusIndicator: React.FC<AnimatedStatusIndicatorProps> = (
   };
 
   const Content = () => (
-    <Animated.View
-      style={animated && (status === 'online' || status === 'connecting') 
-        ? { 
-            transform: [{ scale: pulseAnim }],
-            opacity: pulseOpacity,
-          }
-        : {}
-      }
-    >
+    <View>
       <LinearGradient
         colors={statusConfig.colors}
         start={{ x: 0, y: 0 }}
@@ -213,7 +164,7 @@ export const AnimatedStatusIndicator: React.FC<AnimatedStatusIndicatorProps> = (
           </Text>
         )}
       </LinearGradient>
-    </Animated.View>
+    </View>
     );
 
   if (onPress) {

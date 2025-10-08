@@ -26,7 +26,6 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { FloatingActionButton } from '../components/FloatingActionButton';
 import { AnimatedStatusIndicator } from '../components/AnimatedStatusIndicator';
-import { AnimatedBackground } from '../components/AnimatedBackground';
 import { ChatHistoryCard } from '../components/ChatHistoryCard';
 import { AgentCard } from '../components/AgentCard';
 
@@ -166,11 +165,61 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
 
   const formatDate = (dateString: string | null) => {
     if (!dateString) return language === 'vi' ? 'Chưa có' : 'Never';
-    return new Date(dateString).toLocaleDateString();
+    
+    const date = new Date(dateString);
+    
+    // Check if date is valid
+    if (isNaN(date.getTime())) {
+      console.warn('Invalid date string:', dateString);
+      return language === 'vi' ? 'Không hợp lệ' : 'Invalid';
+    }
+    
+    return date.toLocaleDateString();
   };
 
   const formatTime = (dateString: string) => {
-    return new Date(dateString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (!dateString) return '--:--';
+    
+    try {
+      // Parse the ISO string from backend (should be in UTC+8)
+      const date = new Date(dateString);
+      
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        console.warn('Invalid date string:', dateString);
+        return '--:--';
+      }
+      
+      // Format the time - the backend should be sending UTC+8 timestamps
+      return date.toLocaleTimeString([], { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        timeZone: 'Asia/Singapore' // Ensure we display in UTC+8
+      });
+    } catch (error) {
+      console.error('Error formatting time:', error, 'Date string:', dateString);
+      return '--:--';
+    }
+  };
+
+  // Helper function to safely get date timestamp for sorting
+  const getSafeTimestamp = (dateString: string): number => {
+    if (!dateString) return 0;
+    
+    try {
+      const date = new Date(dateString);
+      
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        console.warn('getSafeTimestamp: Invalid date string for sorting:', dateString);
+        return 0;
+      }
+      
+      return date.getTime();
+    } catch (error) {
+      console.error('getSafeTimestamp: Error parsing date string:', error, 'Date string:', dateString);
+      return 0;
+    }
   };
 
   const pingApi = async (showToast: boolean = true) => {
@@ -241,10 +290,10 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     return Object.entries(conversations)
       .map(([agentId, messages]) => ({
         agentId: parseInt(agentId),
-        messages: messages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+        messages: messages.sort((a, b) => getSafeTimestamp(b.created_at) - getSafeTimestamp(a.created_at)),
         latestMessage: messages[0] // Already sorted, so first is latest
       }))
-      .sort((a, b) => new Date(b.latestMessage.created_at).getTime() - new Date(a.latestMessage.created_at).getTime());
+      .sort((a, b) => getSafeTimestamp(b.latestMessage.created_at) - getSafeTimestamp(a.latestMessage.created_at));
   };
 
   const getConversationsByChatbox = () => {
@@ -263,10 +312,10 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     return Object.entries(conversations)
       .map(([chatboxId, messages]) => ({
         chatboxId: parseInt(chatboxId),
-        messages: messages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+        messages: messages.sort((a, b) => getSafeTimestamp(b.created_at) - getSafeTimestamp(a.created_at)),
         latestMessage: messages[0] // Already sorted, so first is latest
       }))
-      .sort((a, b) => new Date(b.latestMessage.created_at).getTime() - new Date(a.latestMessage.created_at).getTime());
+      .sort((a, b) => getSafeTimestamp(b.latestMessage.created_at) - getSafeTimestamp(a.latestMessage.created_at));
   };
 
   const getGeneralConversations = () => {
@@ -281,7 +330,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     
     // Group all general messages into one conversation
     const sortedMessages = generalMessages.sort((a, b) => 
-      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      getSafeTimestamp(b.created_at) - getSafeTimestamp(a.created_at)
     );
     
     // Create a fake chatbox ID for general conversations (use negative number to avoid conflicts)

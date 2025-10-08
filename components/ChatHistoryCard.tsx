@@ -66,18 +66,35 @@ export const ChatHistoryCard: React.FC<ChatHistoryCardProps> = ({
   }, [animated]);
 
   const formatTimestamp = (timestamp: string) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
+    if (!timestamp) return 'Unknown';
     
-    if (diffMinutes < 60) {
-      return `${diffMinutes}m ago`;
-    } else if (diffMinutes < 1440) {
-      return `${Math.floor(diffMinutes / 60)}h ago`;
-    } else if (diffMinutes < 10080) {
-      return `${Math.floor(diffMinutes / 1440)}d ago`;
-    } else {
-      return date.toLocaleDateString();
+    try {
+      // Parse the ISO string from backend (should be in UTC+8)
+      const date = new Date(timestamp);
+      
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        console.warn('Invalid timestamp:', timestamp);
+        return 'Invalid';
+      }
+      
+      const now = new Date();
+      const diffMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
+      
+      if (diffMinutes < 60) {
+        return `${diffMinutes}m ago`;
+      } else if (diffMinutes < 1440) {
+        return `${Math.floor(diffMinutes / 60)}h ago`;
+      } else if (diffMinutes < 10080) {
+        return `${Math.floor(diffMinutes / 1440)}d ago`;
+      } else {
+        return date.toLocaleDateString([], {
+          timeZone: 'Asia/Singapore' // Ensure we display in UTC+8
+        });
+      }
+    } catch (error) {
+      console.error('Error formatting timestamp:', error, 'Timestamp:', timestamp);
+      return 'Invalid';
     }
   };
 

@@ -15,7 +15,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../theme/ThemeContext';
 import { useAuth } from '../components/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
-import { AnimatedBackground } from '../components/AnimatedBackground';
 import { FloatingActionButton } from '../components/FloatingActionButton';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
@@ -80,8 +79,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
   }
 
   return (
-    <AnimatedBackground intensity="medium">
-      <SafeAreaView style={[styles.container, { backgroundColor: 'transparent' }]}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.type === 'dark' ? '#0F0F23' : '#667EEA' }]}>
       <StatusBar 
           barStyle="light-content"
           backgroundColor="transparent"
@@ -240,7 +238,6 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
           elevation={12}
         />
     </SafeAreaView>
-    </AnimatedBackground>
   );
 };
 

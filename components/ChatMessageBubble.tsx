@@ -120,8 +120,27 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
 
   const formatTime = (timeString?: string) => {
     if (!timeString) return '';
-    const date = new Date(timeString);
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    
+    try {
+      // Parse the ISO string from backend (should be in UTC+8)
+      const date = new Date(timeString);
+      
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        console.warn('Invalid time string:', timeString);
+        return '--:--';
+      }
+      
+      // Format the time - the backend should be sending UTC+8 timestamps
+      return date.toLocaleTimeString([], { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        timeZone: 'Asia/Singapore' // Ensure we display in UTC+8
+      });
+    } catch (error) {
+      console.error('Error formatting time:', error, 'Time string:', timeString);
+      return '--:--';
+    }
   };
 
   const isLink = (text: string) => {

@@ -32,7 +32,6 @@ import { SpeechDiagnostic } from '../components/SpeechDiagnostic';
 import { ScrollView } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { AnimatedStatusIndicator } from '../components/AnimatedStatusIndicator';
-import { AnimatedBackground } from '../components/AnimatedBackground';
 import { FloatingActionButton } from '../components/FloatingActionButton';
 import { ChatMessageBubble } from '../components/ChatMessageBubble';
 import { ChatInput } from '../components/ChatInput';
@@ -382,8 +381,8 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
           
           // Sort messages chronologically (oldest first, newest last)
           const sortedMessages = processedMessages.sort((a, b) => {
-            const dateA = new Date(a.created_at).getTime();
-            const dateB = new Date(b.created_at).getTime();
+            const dateA = getSafeTimestamp(a.created_at);
+            const dateB = getSafeTimestamp(b.created_at);
             return dateA - dateB; // Ascending order (oldest first)
           });
           
@@ -416,8 +415,8 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
           
           // Sort messages chronologically (oldest first, newest last)
           const sortedMessages = processedMessages.sort((a, b) => {
-            const dateA = new Date(a.created_at).getTime();
-            const dateB = new Date(b.created_at).getTime();
+            const dateA = getSafeTimestamp(a.created_at);
+            const dateB = getSafeTimestamp(b.created_at);
             return dateA - dateB; // Ascending order (oldest first)
           });
           
@@ -464,8 +463,8 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
             
             // Sort messages chronologically (oldest first, newest last)
             const sortedMessages = processedMessages.sort((a, b) => {
-              const dateA = new Date(a.created_at).getTime();
-              const dateB = new Date(b.created_at).getTime();
+              const dateA = getSafeTimestamp(a.created_at);
+              const dateB = getSafeTimestamp(b.created_at);
               return dateA - dateB; // Ascending order (oldest first)
             });
             
@@ -504,8 +503,8 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
             
             // Sort messages chronologically (oldest first, newest last)
             const sortedMessages = processedMessages.sort((a, b) => {
-              const dateA = new Date(a.created_at).getTime();
-              const dateB = new Date(b.created_at).getTime();
+              const dateA = getSafeTimestamp(a.created_at);
+              const dateB = getSafeTimestamp(b.created_at);
               return dateA - dateB; // Ascending order (oldest first)
             });
             
@@ -1250,20 +1249,88 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
   };
 
   const formatTime = (dateString: string) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60);
+    if (!dateString) {
+      return '--:--';
+    }
     
-    if (diffInHours < 24) {
-      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } else {
-      return date.toLocaleDateString();
+    try {
+      // Parse the ISO string from backend (should be in UTC+8)
+      const date = new Date(dateString);
+      
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        console.warn('Invalid date string:', dateString);
+        return '--:--';
+      }
+      
+      // Check if the date is reasonable (not too old/future)
+      const now = new Date();
+      const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60);
+      
+      // If the date is more than 1 year in the past or future, it's likely invalid
+      if (Math.abs(diffInHours) > 8760) { // 8760 hours = 1 year
+        console.warn('Date seems invalid (too old/future):', dateString);
+        return '--:--';
+      }
+      
+      // If the date is very close to epoch (1970), it's likely invalid
+      if (date.getFullYear() < 2000) {
+        console.warn('Date seems invalid (before year 2000):', dateString);
+        return '--:--';
+      }
+      
+      // Format the time - the backend should be sending UTC+8 timestamps
+      if (diffInHours < 24) {
+        // Show time for messages within 24 hours
+        return date.toLocaleTimeString([], { 
+          hour: '2-digit', 
+          minute: '2-digit',
+          timeZone: 'Asia/Singapore' // Ensure we display in UTC+8
+        });
+      } else {
+        // Show date for older messages
+        return date.toLocaleDateString([], {
+          timeZone: 'Asia/Singapore' // Ensure we display in UTC+8
+        });
+      }
+    } catch (error) {
+      console.error('Error formatting time:', error, 'Date string:', dateString);
+      return '--:--';
     }
   };
 
   const formatDate = (dateString: string | null) => {
     if (!dateString) return language === 'vi' ? 'Chưa có' : 'Never';
-    return new Date(dateString).toLocaleDateString();
+    
+    const date = new Date(dateString);
+    
+    // Check if date is valid
+    if (isNaN(date.getTime())) {
+      console.warn('Invalid date string:', dateString);
+      return language === 'vi' ? 'Không hợp lệ' : 'Invalid';
+    }
+    
+    return date.toLocaleDateString();
+  };
+
+  // Helper function to safely get date timestamp for sorting
+  const getSafeTimestamp = (dateString: string): number => {
+    if (!dateString) return 0;
+    
+    try {
+      const date = new Date(dateString);
+      
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        console.warn('getSafeTimestamp: Invalid date string for sorting:', dateString);
+        return 0;
+      }
+      
+      return date.getTime();
+    } catch (error) {
+      console.error('getSafeTimestamp: Error parsing date string:', error, 'Date string:', dateString);
+      return 0;
+    }
   };
 
   const getConversationsByAgent = () => {
@@ -1291,10 +1358,10 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
     const result = Object.entries(conversations)
       .map(([agentId, messages]) => ({
         agentId: parseInt(agentId),
-        messages: messages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+        messages: messages.sort((a, b) => getSafeTimestamp(b.created_at) - getSafeTimestamp(a.created_at)),
         latestMessage: messages[0] // Already sorted, so first is latest
       }))
-      .sort((a, b) => new Date(b.latestMessage.created_at).getTime() - new Date(a.latestMessage.created_at).getTime());
+      .sort((a, b) => getSafeTimestamp(b.latestMessage.created_at) - getSafeTimestamp(a.latestMessage.created_at));
     
     console.log('🔄 ChatScreen: Returning', result.length, 'agent conversations');
     return result;
@@ -1326,10 +1393,10 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
     const result = Object.entries(conversations)
       .map(([chatboxId, messages]) => ({
         chatboxId: parseInt(chatboxId),
-        messages: messages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+        messages: messages.sort((a, b) => getSafeTimestamp(b.created_at) - getSafeTimestamp(a.created_at)),
         latestMessage: messages[0] // Already sorted, so first is latest
       }))
-      .sort((a, b) => new Date(b.latestMessage.created_at).getTime() - new Date(a.latestMessage.created_at).getTime());
+      .sort((a, b) => getSafeTimestamp(b.latestMessage.created_at) - getSafeTimestamp(a.latestMessage.created_at));
     
     console.log('🔄 ChatScreen: Returning', result.length, 'chatbox conversations');
     return result;
@@ -1351,7 +1418,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
     
     // Group all general messages into one conversation
     const sortedMessages = generalMessages.sort((a, b) => 
-      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      getSafeTimestamp(b.created_at) - getSafeTimestamp(a.created_at)
     );
     
     // Create a fake chatbox ID for general conversations (use negative number to avoid conflicts)
@@ -2173,11 +2240,10 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
   }
 
   return (
-    <AnimatedBackground intensity="light">
-      <SafeAreaView 
-        style={[styles.container, { backgroundColor: 'transparent' }]}
-        key={`chat-screen-${messageRefreshKey}`}
-      >
+    <SafeAreaView 
+      style={[styles.container, { backgroundColor: theme.type === 'dark' ? '#0F0F23' : '#667EEA' }]}
+      key={`chat-screen-${messageRefreshKey}`}
+    >
       <StatusBar 
           barStyle="light-content"
           backgroundColor="transparent"
@@ -2357,7 +2423,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
                   <ChatMessageBubble
                     message={message.message}
                     isUser={true}
-                    timestamp={new Date(message.created_at).toLocaleTimeString()}
+                    timestamp={formatTime(message.created_at)}
                     agentId={selectedAgent?.id}
                     animated={true}
                   />
@@ -2366,7 +2432,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
                     <ChatMessageBubble
                       message={message.response}
                       isUser={false}
-                      timestamp={new Date(message.created_at).toLocaleTimeString()}
+                      timestamp={formatTime(message.created_at)}
                       agentId={selectedAgent?.id}
                       animated={true}
                     />
@@ -2505,7 +2571,6 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
       )}
 
     </SafeAreaView>
-    </AnimatedBackground>
   );
 };
 

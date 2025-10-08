@@ -36,7 +36,6 @@ export const AgentCard: React.FC<AgentCardProps> = ({
 }) => {
   const { theme } = useTheme();
   const cardAnim = useRef(new Animated.Value(0)).current;
-  const pulseAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     if (animated) {
@@ -47,32 +46,10 @@ export const AgentCard: React.FC<AgentCardProps> = ({
         delay: agent.id * 100, // Staggered animation
         useNativeDriver: true,
       }).start();
-
-      // Pulse animation for online agents
-      if (agent.is_online) {
-        const pulseAnimation = Animated.loop(
-          Animated.sequence([
-            Animated.timing(pulseAnim, {
-              toValue: 1.05,
-              duration: 1500,
-              useNativeDriver: true,
-            }),
-            Animated.timing(pulseAnim, {
-              toValue: 1,
-              duration: 1500,
-              useNativeDriver: true,
-            }),
-          ])
-        );
-        pulseAnimation.start();
-
-        return () => pulseAnimation.stop();
-      }
     } else {
       cardAnim.setValue(1);
-      pulseAnim.setValue(1);
     }
-  }, [animated, agent.id, agent.is_online]);
+  }, [animated, agent.id]);
 
   const getAgentIcon = (agentName: string) => {
     const name = agent.name.toLowerCase();
@@ -127,7 +104,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
                 outputRange: [50, 0],
               }),
             },
-            { scale: agent.is_online ? pulseAnim : 1 },
+            { scale: 1 },
           ],
           opacity: cardAnim,
         },

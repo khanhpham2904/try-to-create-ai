@@ -7,7 +7,7 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "scheme": "chatapp",
     "splash": {
       "image": "./assets/splash-icon.png",
@@ -44,8 +44,6 @@
       }
     },
     "owner": "peterzeihan",
-    "plugins": [
-      "react-native-edge-to-edge"
-    ]
+    "plugins": []
   }
 }

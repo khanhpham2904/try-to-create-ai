@@ -15,6 +15,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../theme/ThemeContext';
 import { useAuth } from '../components/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
+import { useUserProfile } from '../components/UserProfileContext';
 import { FloatingActionButton } from '../components/FloatingActionButton';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
@@ -26,6 +27,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
   const { theme } = useTheme();
   const { user, logout } = useAuth();
   const { language } = useLanguage();
+  const { profile, personalizationData } = useUserProfile();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(50)).current;
 
@@ -152,12 +154,128 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
                       {language === 'vi' ? 'Hoạt động' : 'Active'}
                     </Text>
                   </View>
+                  
+                  {/* Personalization Badge */}
+                  {personalizationData && personalizationData.total_interactions > 0 && (
+                    <View style={styles.personalizationBadge}>
+                      <Icon name="tune" size={14} color="white" />
+                      <Text style={styles.personalizationBadgeText}>
+                        {personalizationData.total_interactions} {language === 'vi' ? 'tương tác' : 'interactions'}
+                      </Text>
+                    </View>
+                  )}
                 </View>
               </LinearGradient>
         </View>
 
+            {/* Personalization Section */}
+            <View style={styles.menuSection}>
+              <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
+                🎯 {language === 'vi' ? 'Cá Nhân Hóa' : 'Personalization'}
+              </Text>
+              
+              <LinearGradient
+                colors={theme.type === 'dark' 
+                  ? ['rgba(255,255,255,0.08)', 'rgba(255,255,255,0.03)'] as [string, string, ...string[]]
+                  : ['rgba(255,255,255,0.85)', 'rgba(247,250,252,0.9)'] as [string, string, ...string[]]
+                }
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={[styles.menuContainer, { borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }]}
+              >
+                {/* Personal Profile Management */}
+                <TouchableOpacity
+                  style={styles.menuItemModern}
+                  onPress={() => navigation.navigate('UserProfile')}
+                >
+                  <Icon name="person" size={24} color={theme.colors.primary} />
+                  <View style={styles.menuTextContainer}>
+                    <Text style={[styles.menuTextModern, { color: theme.colors.text }]}>
+                      {language === 'vi' ? 'Hồ Sơ Cá Nhân' : 'Personal Profile'}
+                    </Text>
+                    <Text style={[styles.menuSubtext, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' 
+                        ? 'Tùy chỉnh cách AI phản hồi với bạn' 
+                        : 'Customize how AI responds to you'
+                      }
+                    </Text>
+                  </View>
+                  <Icon name="chevron-right" size={24} color={theme.colors.textSecondary} />
+                </TouchableOpacity>
+
+                {/* Communication Style Display */}
+                {profile && (
+                  <View style={styles.menuItemModern}>
+                    <Icon name="chat" size={24} color={theme.colors.primary} />
+                    <View style={styles.menuTextContainer}>
+                      <Text style={[styles.menuTextModern, { color: theme.colors.text }]}>
+                        {language === 'vi' ? 'Phong Cách Giao Tiếp' : 'Communication Style'}
+                      </Text>
+                      <Text style={[styles.menuSubtext, { color: theme.colors.textSecondary }]}>
+                        {profile.communication_style === 'balanced' && (language === 'vi' ? 'Cân bằng, thân thiện' : 'Balanced, friendly')}
+                        {profile.communication_style === 'formal' && (language === 'vi' ? 'Trang trọng, chuyên nghiệp' : 'Formal, professional')}
+                        {profile.communication_style === 'casual' && (language === 'vi' ? 'Thân mật, trò chuyện' : 'Casual, conversational')}
+                        {profile.communication_style === 'technical' && (language === 'vi' ? 'Kỹ thuật, chi tiết' : 'Technical, detailed')}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+
+                {/* Response Length Display */}
+                {profile && (
+                  <View style={styles.menuItemModern}>
+                    <Icon name="format-size" size={24} color={theme.colors.primary} />
+                    <View style={styles.menuTextContainer}>
+                      <Text style={[styles.menuTextModern, { color: theme.colors.text }]}>
+                        {language === 'vi' ? 'Độ Dài Phản Hồi' : 'Response Length'}
+                      </Text>
+                      <Text style={[styles.menuSubtext, { color: theme.colors.textSecondary }]}>
+                        {profile.response_length_preference === 'short' && (language === 'vi' ? 'Ngắn gọn, súc tích' : 'Short, concise')}
+                        {profile.response_length_preference === 'medium' && (language === 'vi' ? 'Vừa phải, tiêu chuẩn' : 'Medium, standard')}
+                        {profile.response_length_preference === 'detailed' && (language === 'vi' ? 'Chi tiết, đầy đủ' : 'Detailed, comprehensive')}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+
+                {/* Interests Display */}
+                {profile && profile.interests && profile.interests.length > 0 && (
+                  <View style={styles.menuItemModern}>
+                    <Icon name="favorite" size={24} color={theme.colors.primary} />
+                    <View style={styles.menuTextContainer}>
+                      <Text style={[styles.menuTextModern, { color: theme.colors.text }]}>
+                        {language === 'vi' ? 'Sở Thích' : 'Interests'}
+                      </Text>
+                      <Text style={[styles.menuSubtext, { color: theme.colors.textSecondary }]}>
+                        {profile.interests.slice(0, 3).join(', ')}
+                        {profile.interests.length > 3 && ` +${profile.interests.length - 3} more`}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+
+                {/* Usage Statistics */}
+                {personalizationData && (
+                  <View style={styles.menuItemModern}>
+                    <Icon name="analytics" size={24} color={theme.colors.primary} />
+                    <View style={styles.menuTextContainer}>
+                      <Text style={[styles.menuTextModern, { color: theme.colors.text }]}>
+                        {language === 'vi' ? 'Thống Kê Sử Dụng' : 'Usage Statistics'}
+                      </Text>
+                      <Text style={[styles.menuSubtext, { color: theme.colors.textSecondary }]}>
+                        {language === 'vi' 
+                          ? `${personalizationData.total_interactions} tương tác, ${personalizationData.preferred_topics?.length || 0} chủ đề học được`
+                          : `${personalizationData.total_interactions} interactions, ${personalizationData.preferred_topics?.length || 0} learned topics`
+                        }
+                      </Text>
+                    </View>
+                  </View>
+                )}
+              </LinearGradient>
+            </View>
+
             {/* Settings Section */}
-        <View style={styles.menuSection}>
+            <View style={styles.menuSection}>
               <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
                 {language === 'vi' ? '⚙️ Cài Đặt' : '⚙️ Settings'}
               </Text>
@@ -171,40 +289,40 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
                 end={{ x: 1, y: 1 }}
                 style={[styles.menuContainer, { borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }]}
               >
-          <TouchableOpacity
-                  style={[styles.menuItemModern]}
-            onPress={() => navigation.navigate('Settings')}
-          >
-            <Icon name="settings" size={24} color={theme.colors.primary} />
-            <Text style={[styles.menuText, { color: theme.colors.text }]}>
-              {language === 'vi' ? 'Cài Đặt' : 'Settings'}
-            </Text>
-            <Icon name="chevron-right" size={24} color={theme.colors.textSecondary} />
-          </TouchableOpacity>
-
-          <TouchableOpacity
+                <TouchableOpacity
                   style={styles.menuItemModern}
-            onPress={() => {/* Handle help */}}
-          >
+                  onPress={() => navigation.navigate('Settings')}
+                >
+                  <Icon name="settings" size={24} color={theme.colors.primary} />
+                  <Text style={[styles.menuTextModern, { color: theme.colors.text }]}>
+                    {language === 'vi' ? 'Cài Đặt' : 'Settings'}
+                  </Text>
+                  <Icon name="chevron-right" size={24} color={theme.colors.textSecondary} />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.menuItemModern}
+                  onPress={() => {/* Handle help */}}
+                >
                   <Icon name="help" size={24} color={theme.colors.success} />
                   <Text style={[styles.menuTextModern, { color: theme.colors.text }]}>
                     {language === 'vi' ? '🆘 Trợ Giúp & Hỗ Trợ' : '🆘 Help & Support'}
-            </Text>
+                  </Text>
                   <Icon name="chevron-right" size={20} color={theme.colors.textTertiary} />
-          </TouchableOpacity>
+                </TouchableOpacity>
 
-          <TouchableOpacity
+                <TouchableOpacity
                   style={styles.menuItemModern}
-            onPress={() => {/* Handle about */}}
-          >
+                  onPress={() => {/* Handle about */}}
+                >
                   <Icon name="info" size={24} color={theme.colors.info} />
                   <Text style={[styles.menuTextModern, { color: theme.colors.text }]}>
                     {language === 'vi' ? 'ℹ️ Thông Tin Ứng Dụng' : 'ℹ️ About App'}
-            </Text>
+                  </Text>
                   <Icon name="chevron-right" size={20} color={theme.colors.textTertiary} />
-          </TouchableOpacity>
+                </TouchableOpacity>
               </LinearGradient>
-        </View>
+            </View>
 
             {/* Logout Section */}
             <View style={styles.logoutSection}>
@@ -384,6 +502,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
+  personalizationBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(102, 126, 234, 0.8)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    marginTop: 8,
+    gap: 4,
+  },
+  personalizationBadgeText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '500',
+  },
   menuSection: {
     marginBottom: 32,
   },
@@ -415,6 +548,15 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     flex: 1,
     marginLeft: 16,
+  },
+  menuTextContainer: {
+    flex: 1,
+    marginLeft: 16,
+  },
+  menuSubtext: {
+    fontSize: 14,
+    marginTop: 2,
+    opacity: 0.8,
   },
   logoutSection: {
     paddingHorizontal: 8,

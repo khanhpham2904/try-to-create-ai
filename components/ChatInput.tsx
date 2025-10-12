@@ -130,12 +130,22 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     <Animated.View style={[styles.inputContainer, animatedInputStyle]}>
       {showAttach && (
         <TouchableOpacity
-          onPress={onAttach}
+          onPress={() => {
+            console.log('🔘 ChatInput: Attachment button pressed!');
+            console.log('🔘 ChatInput: disabled state:', disabled);
+            // Prevent keyboard focus change
+            inputRef.current?.blur();
+            if (onAttach) {
+              onAttach();
+            } else {
+              console.log('🔘 ChatInput: onAttach handler is null!');
+            }
+          }}
           style={[styles.attachButton, { backgroundColor: theme.colors.primary + '20' }]}
           disabled={disabled}
           activeOpacity={0.7}
         >
-          <Icon name="attach-file" size={20} color={theme.colors.primary} />
+          <Icon name="add" size={20} color={theme.colors.primary} />
         </TouchableOpacity>
       )}
 

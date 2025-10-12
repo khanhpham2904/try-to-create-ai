@@ -3,7 +3,8 @@ module.exports = function (api) {
   return {
     presets: ['babel-preset-expo'],
     plugins: [
-      // Add other plugins here if needed
+      // Add plugin for better React Native 0.76+ compatibility
+      '@babel/plugin-transform-runtime',
     ],
   };
 }; 

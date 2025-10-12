@@ -15,6 +15,7 @@ interface AuthContextType {
   user: User | null;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   register: (email: string, password: string, name: string) => Promise<{ success: boolean; error?: string }>;
+  updateUser: (userData: { full_name?: string; email?: string }) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   clearCache: () => Promise<void>;
   isLoading: boolean;
@@ -24,6 +25,7 @@ export const AuthContext = React.createContext<AuthContextType>({
   user: null,
   login: async () => ({ success: false }),
   register: async () => ({ success: false }),
+  updateUser: async () => ({ success: false }),
   logout: () => {},
   clearCache: async () => {},
   isLoading: false,
@@ -184,6 +186,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  // Function to update user information
+  const updateUser = async (userData: { full_name?: string; email?: string }) => {
+    if (!user) {
+      return { success: false, error: 'No user logged in' };
+    }
+
+    try {
+      console.log('👤 Updating user:', userData);
+      const response = await apiService.updateUser(Number(user.id), userData);
+      
+      if (response.data) {
+        // Update the user state with new data
+        const updatedUser = {
+          ...user,
+          name: userData.full_name || user.name,
+          email: userData.email || user.email,
+        };
+        
+        setUser(updatedUser);
+        
+        // Update stored user data
+        await AsyncStorage.setItem('user', JSON.stringify(updatedUser));
+        
+        console.log('✅ User updated successfully');
+        return { success: true };
+      } else {
+        console.error('❌ Failed to update user');
+        return { success: false, error: 'Failed to update user' };
+      }
+    } catch (error) {
+      console.error('❌ Error updating user:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  };
+
   // Function to manually clear all cache
   const clearCache = async () => {
     try {
@@ -223,7 +260,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, login, register, logout, clearCache, isLoading }}>
+    <AuthContext.Provider value={{ user, login, register, updateUser, logout, clearCache, isLoading }}>
       {children}
     </AuthContext.Provider>
   );

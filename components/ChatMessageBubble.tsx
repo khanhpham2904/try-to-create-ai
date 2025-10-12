@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Platform,
   Linking,
+  Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -42,7 +43,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
         Animated.timing(slideAnim, {
           toValue: 0,
           duration: 300,
-          useNativeDriver: false,
+          useNativeDriver: true, // Changed to true to match other animations
         }),
         Animated.timing(fadeAnim, {
           toValue: 1,
@@ -121,31 +122,65 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
   const formatTime = (timeString?: string) => {
     if (!timeString) return '';
     
-    try {
-      // Parse the ISO string from backend (should be in UTC+8)
-      const date = new Date(timeString);
-      
-      // Check if date is valid
-      if (isNaN(date.getTime())) {
-        console.warn('Invalid time string:', timeString);
-        return '--:--';
-      }
-      
-      // Format the time - the backend should be sending UTC+8 timestamps
-      return date.toLocaleTimeString([], { 
-        hour: '2-digit', 
-        minute: '2-digit',
-        timeZone: 'Asia/Singapore' // Ensure we display in UTC+8
-      });
-    } catch (error) {
-      console.error('Error formatting time:', error, 'Time string:', timeString);
-      return '--:--';
-    }
+    const { formatTime: formatTimeUtil, getUserTimezone } = require('../utils/timeUtils');
+    return formatTimeUtil(timeString, { 
+      timeZone: getUserTimezone() 
+    });
   };
 
   const isLink = (text: string) => {
     const urlRegex = /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/;
     return urlRegex.test(text.trim());
+  };
+
+  const isImageMessage = (text: string) => {
+    return text.startsWith('[IMAGE:') && text.includes(']');
+  };
+
+  const isDocumentMessage = (text: string) => {
+    return text.startsWith('[DOCUMENT:') && text.includes(']');
+  };
+
+  const extractImageAndText = (text: string) => {
+    if (isImageMessage(text)) {
+      const imageMatch = text.match(/^\[IMAGE:([^\]]+)\]\s*(.*)$/);
+      if (imageMatch) {
+        return {
+          hasImage: true,
+          imageData: imageMatch[1],
+          messageText: imageMatch[2].trim(),
+          hasDocument: false,
+          documentData: null
+        };
+      }
+    }
+    
+    if (isDocumentMessage(text)) {
+      const documentMatch = text.match(/^\[DOCUMENT:([^\]]+)\]\s*(.*)$/);
+      if (documentMatch) {
+        const filename = documentMatch[1];
+        const content = documentMatch[2];
+        
+        // Split content to separate document content from user message
+        const lines = content.split('\n');
+        const documentContent = lines.length > 1 ? lines.slice(0, -1).join('\n') : content;
+        const userMessage = lines.length > 1 ? lines[lines.length - 1] : '';
+        
+        return {
+          hasImage: false,
+          imageData: null,
+          messageText: userMessage,
+          hasDocument: true,
+          documentData: {
+            filename,
+            content: documentContent,
+            preview: documentContent.substring(0, 200) + (documentContent.length > 200 ? '...' : '')
+          }
+        };
+      }
+    }
+    
+    return { hasImage: false, imageData: null, messageText: text, hasDocument: false, documentData: null };
   };
 
   const handlePress = (text: string) => {
@@ -189,20 +224,56 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
               </Text>
             )}
             
-            {isLink(message) ? (
-              <TouchableOpacity onPress={() => handlePress(message)}>
-                <Text style={[styles.messageText, { color: isUser ? 'white' : theme.colors.info, textDecorationLine: 'underline' }]}>
-                  {message}
-                </Text>
-                <View style={styles.linkIcon}>
-                  <Icon name="open-in-new" size={12} color={isUser ? 'white' : theme.colors.info} />
-                </View>
-              </TouchableOpacity>
-            ) : (
-              <Text style={[styles.messageText, { color: getTextColor() }]}>
-                {message}
-              </Text>
-            )}
+            {(() => {
+              const { hasImage, imageData, messageText, hasDocument, documentData } = extractImageAndText(message);
+              
+              return (
+                <>
+                  {hasImage && imageData && (
+                    <View style={styles.imageContainer}>
+                      <Image
+                        source={{ uri: `data:image/jpeg;base64,${imageData}` }}
+                        style={styles.messageImage}
+                        resizeMode="contain"
+                      />
+                    </View>
+                  )}
+                  
+                  {hasDocument && documentData && (
+                    <View style={[styles.documentContainer, { backgroundColor: theme.colors.background, borderColor: theme.colors.border }]}>
+                      <View style={styles.documentHeader}>
+                        <Icon name="description" size={20} color={theme.colors.primary} />
+                        <Text style={[styles.documentFilename, { color: theme.colors.text }]}>
+                          {documentData.filename}
+                        </Text>
+                      </View>
+                      <Text style={[styles.documentPreview, { color: theme.colors.textSecondary }]}>
+                        {documentData.preview}
+                      </Text>
+                    </View>
+                  )}
+                  
+                  {messageText && (
+                    <>
+                      {isLink(messageText) ? (
+                        <TouchableOpacity onPress={() => handlePress(messageText)}>
+                          <Text style={[styles.messageText, { color: isUser ? 'white' : theme.colors.info, textDecorationLine: 'underline' }]}>
+                            {messageText}
+                          </Text>
+                          <View style={styles.linkIcon}>
+                            <Icon name="open-in-new" size={12} color={isUser ? 'white' : theme.colors.info} />
+                          </View>
+                        </TouchableOpacity>
+                      ) : (
+                        <Text style={[styles.messageText, { color: getTextColor() }]}>
+                          {messageText}
+                        </Text>
+                      )}
+                    </>
+                  )}
+                </>
+              );
+            })()}
             
             {timestamp && (
               <Text style={[styles.timestamp, { color: isUser ? 'rgba(255,255,255,0.7)' : theme.colors.textTertiary }]}>
@@ -264,5 +335,37 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 2,
     right: 2,
+  },
+  imageContainer: {
+    marginVertical: 8,
+    alignItems: 'center',
+  },
+  messageImage: {
+    width: 200,
+    height: 200,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  documentContainer: {
+    marginVertical: 8,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    maxWidth: 250,
+  },
+  documentHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  documentFilename: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 8,
+    flex: 1,
+  },
+  documentPreview: {
+    fontSize: 12,
+    lineHeight: 16,
   },
 });

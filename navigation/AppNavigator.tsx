@@ -13,6 +13,7 @@ import HomeScreen from '../screens/HomeScreen';
 import ChatScreen from '../screens/ChatScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import UserProfileScreen from '../screens/UserProfileScreen';
 import { WelcomeScreen } from '../components/WelcomeScreen';
 
 const Stack = createStackNavigator();
@@ -112,7 +113,24 @@ const AppNavigator = () => {
         }}
       >
         {user ? (
-          <Stack.Screen name="Main" component={MainTabs} />
+          <>
+            <Stack.Screen name="Main" component={MainTabs} />
+            <Stack.Screen 
+              name="UserProfile" 
+              component={UserProfileScreen}
+              options={{
+                headerShown: true,
+                title: 'Personalization Profile',
+                headerStyle: {
+                  backgroundColor: theme.colors.primary,
+                },
+                headerTintColor: 'white',
+                headerTitleStyle: {
+                  fontWeight: 'bold',
+                },
+              }}
+            />
+          </>
         ) : (
           <>
             <Stack.Screen name="Welcome" component={WelcomeScreen} />

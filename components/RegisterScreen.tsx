@@ -19,6 +19,7 @@ import { useTheme } from '../theme/ThemeContext';
 import { useFormValidation } from '../hooks/useFormValidation';
 import { useLanguage } from '../i18n/LanguageContext';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import { LinearGradient } from 'expo-linear-gradient';
 
 interface RegisterScreenProps {
   navigation: any;
@@ -101,38 +102,51 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({ navigation }) =>
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
-      <StatusBar barStyle={theme.type === 'dark' ? 'light-content' : 'dark-content'} />
-      <KeyboardAvoidingView 
-        style={styles.keyboardContainer} 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <ScrollView 
-          contentContainerStyle={styles.scrollContent} 
-          showsVerticalScrollIndicator={false}
-          bounces={false}
+    <LinearGradient
+      colors={theme.type === 'dark' 
+        ? ['#0F0F23', '#1A1625', '#2D3748'] 
+        : ['#667EEA', '#764BA2', '#FAFAFA']
+      }
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={styles.container}
+    >
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar barStyle={theme.type === 'dark' ? 'light-content' : 'dark-content'} />
+        <KeyboardAvoidingView 
+          style={styles.keyboardContainer} 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
-          {/* Header Section */}
-          <View style={styles.headerSection}>
-            <View style={[styles.logoContainer, { backgroundColor: theme.colors.primary + '15' }]}>
-              <AnimatedLogo size={60} />
-            </View>
-            <Text style={[styles.title, { color: theme.colors.text }]}>
-              {t('language') === 'vi' ? 'Tham Gia AI Chat' : 'Join AI Chat'}
-            </Text>
-            <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
-              {t('language') === 'vi' ? 'Tạo tài khoản và bắt đầu trò chuyện với AI' : 'Create your account and start chatting with AI'}
-            </Text>
-          </View>
-
-          {/* Form Section */}
-          <View style={[styles.formContainer, { backgroundColor: theme.colors.surface }]}>
-            <View style={styles.formHeader}>
-              <Icon name="person-add" size={24} color={theme.colors.primary} />
-              <Text style={[styles.formTitle, { color: theme.colors.text }]}>
-                {t('language') === 'vi' ? 'Tạo Tài Khoản' : 'Create Account'}
+          <ScrollView 
+            contentContainerStyle={styles.scrollContent} 
+            showsVerticalScrollIndicator={false}
+            bounces={false}
+          >
+            {/* Header Section */}
+            <View style={styles.headerSection}>
+              <View style={[styles.logoContainer, { backgroundColor: 'rgba(255,255,255,0.15)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }]}>
+                <AnimatedLogo size={60} />
+              </View>
+              <Text style={[styles.title, { color: 'white', textShadowColor: 'rgba(0,0,0,0.3)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 }]}>
+                {t('language') === 'vi' ? '✨ Tham Gia AI Chat' : '✨ Join AI Chat'}
+              </Text>
+              <Text style={[styles.subtitle, { color: 'rgba(255,255,255,0.8)', textShadowColor: 'rgba(0,0,0,0.2)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 }]}>
+                {t('language') === 'vi' ? 'Tạo tài khoản và bắt đầu trò chuyện với AI' : 'Create your account and start chatting with AI'}
               </Text>
             </View>
+
+            {/* Form Section */}
+            <View style={[styles.formContainer, { 
+              backgroundColor: theme.type === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.9)', 
+              borderWidth: 1, 
+              borderColor: theme.type === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.3)'
+            }]}>
+              <View style={styles.formHeader}>
+                <Icon name="person-add" size={24} color={theme.colors.primary} />
+                <Text style={[styles.formTitle, { color: theme.colors.text }]}>
+                  {t('language') === 'vi' ? 'Tạo Tài Khoản' : 'Create Account'}
+                </Text>
+              </View>
 
             <View style={styles.inputContainer}>
               <FormInput
@@ -257,6 +271,12 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({ navigation }) =>
                     {t('language') === 'vi' ? 'Lịch sử trò chuyện và ngữ cảnh' : 'Chat history and context'}
                   </Text>
                 </View>
+                <View style={styles.featureItem}>
+                  <Icon name="security" size={16} color={theme.colors.primary} />
+                  <Text style={[styles.featureText, { color: theme.colors.primary }]}>
+                    {t('language') === 'vi' ? 'Bảo mật và riêng tư cao' : 'High security and privacy'}
+                  </Text>
+                </View>
               </View>
             </View>
 
@@ -273,13 +293,17 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({ navigation }) =>
             </View>
           </View>
         </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+  },
+  safeArea: {
     flex: 1,
   },
   keyboardContainer: {

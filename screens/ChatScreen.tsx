@@ -12,21 +12,24 @@ import {
   ActivityIndicator,
   SafeAreaView,
   StatusBar,
-  Animated,
   Dimensions,
   Modal,
-         } from 'react-native';
+  Image,
+  Keyboard,
+} from 'react-native';
+import { Animated } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { useAuth } from '../components/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 import { useAgent } from '../components/AgentContext';
+import { useUserProfile } from '../components/UserProfileContext';
 import { apiService, ChatMessage, Agent, ChatMessageWithAgent, Chatbox, ChatboxWithMessages } from '../services/api';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import AgentCustomizer from '../components/AgentCustomizer';
 import AgentSelector from '../components/AgentSelector';
 import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { SpeechToTextButton } from '../components/SpeechToTextButton';
 import { SpeechDiagnostic } from '../components/SpeechDiagnostic';
 import { ScrollView } from 'react-native';
@@ -43,11 +46,12 @@ interface ChatScreenProps {
 
 const { width } = Dimensions.get('window');
 
-const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
+const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
   const { theme } = useTheme();
   const { user } = useAuth();
   const { language } = useLanguage();
   const { selectedAgent, setSelectedAgent } = useAgent();
+  const { recordInteraction, personalizationData } = useUserProfile();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -72,6 +76,19 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
   const [showFileModal, setShowFileModal] = useState(false);
   const [fileModalContent, setFileModalContent] = useState('');
   const [fileModalName, setFileModalName] = useState('');
+  
+  // Image/Document import state
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [selectedDocument, setSelectedDocument] = useState<string | null>(null);
+  const [selectedFileName, setSelectedFileName] = useState<string>('');
+  const [selectedFileType, setSelectedFileType] = useState<'image' | 'document'>('image');
+  const [imageModalVisible, setImageModalVisible] = useState(false);
+  const [imageLoading, setImageLoading] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
+  
+  // Attachment options mini table state
+  const [attachmentOptionsVisible, setAttachmentOptionsVisible] = useState(false);
+  const slideAnim = useRef(new Animated.Value(300)).current;
   const [messageRefreshKey, setMessageRefreshKey] = useState(0);
   const [scrollPosition, setScrollPosition] = useState(0);
   const [shouldPreserveScroll, setShouldPreserveScroll] = useState(false);
@@ -82,11 +99,11 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
 
   // Function to force message refresh
   const forceMessageRefresh = () => {
-    setMessageRefreshKey(prev => prev + 1);
+    setMessageRefreshKey((prev: number) => prev + 1);
     // Preserve scroll position during refresh
     setShouldPreserveScroll(true);
     setTimeout(() => {
-      setMessages(prev => [...prev]);
+      setMessages((prev: ChatMessage[]) => [...prev]);
     }, 50);
   };
 
@@ -109,7 +126,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
     if (!showAgentSelector && !showAgentCustomizer && isInChat) {
       // Restore layout when modals close
       setTimeout(() => {
-        setMessageRefreshKey(prev => prev + 1);
+        setMessageRefreshKey((prev: number) => prev + 1);
       }, 150);
     }
   }, [showAgentSelector, showAgentCustomizer, isInChat]);
@@ -118,7 +135,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
   useEffect(() => {
     if (route?.params?.chatboxId && user) {
       const chatboxId = route.params.chatboxId;
-      const chatbox = allChatboxes.find(c => c.id === chatboxId);
+      const chatbox = allChatboxes.find((c: any) => c.id === chatboxId);
       if (chatbox) {
         console.log('🔄 Setting chatbox mode:', chatbox.title, 'ID:', chatbox.id);
         setSelectedChatbox(chatbox);
@@ -216,15 +233,15 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
   // Cleanup typing messages when switching agents or component unmounts
   useEffect(() => {
     const cleanupTypingMessages = () => {
-      setMessages(prev => {
+      setMessages((prev: ChatMessage[]) => {
         const typingMessagePattern = language === 'vi' ? '🤖 AI đang trả lời...' : '🤖 AI is typing...';
-        const hasTypingMessages = prev.some(msg => 
+        const hasTypingMessages = prev.some((msg: ChatMessage) => 
           msg.response && msg.response.includes(typingMessagePattern)
         );
         
         if (hasTypingMessages) {
           console.log('🧹 Cleaning up stuck typing messages');
-          return prev.filter(msg => 
+          return prev.filter((msg: ChatMessage) => 
             !msg.response || !msg.response.includes(typingMessagePattern)
           );
         }
@@ -364,10 +381,12 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
         await new Promise(resolve => setTimeout(resolve, 300));
         
         const response = await apiService.getUserMessages(Number(user.id), 0, 100, selectedAgent.id);
-        console.log('📜 Messages response:', response);
+          console.log('📜 Messages response:', response);
         
         if (response.data && response.data.messages) {
           console.log('📜 Found', response.data.messages.length, 'messages');
+          
+          
           // Process messages to ensure proper format
           let processedMessages = response.data.messages.map((msg: any) => ({
             id: msg.id,
@@ -687,37 +706,35 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
         // Replace the typing message with the actual AI response
         setMessages(prev => {
           console.log('🔄 Removing typing message with ID:', typingMessageId);
-          console.log('🔄 Current messages before filter:', prev.map(m => ({ id: m.id, response: m.response })));
+          console.log('🔄 Current messages before filter:', prev.map(m => ({ id: m.id, message: m.message, response: m.response, fileName: m.fileName })));
           
           // Remove typing message by ID and content pattern
           const typingMessagePattern = language === 'vi' ? '🤖 AI đang trả lời...' : '🤖 AI is typing...';
           const filteredMessages = prev.filter(msg => {
-            // Remove by ID
+            // Remove by ID (most reliable)
             if (msg.id === typingMessageId) {
               console.log('🔄 Removing typing message by ID:', msg.id, msg.response);
               return false;
             }
-            // Remove by content pattern (fallback)
+            // Remove by content pattern (fallback) - only if it's actually a typing message
             if (msg.response && msg.response.includes(typingMessagePattern)) {
               console.log('🔄 Removing typing message by content pattern:', msg.id, msg.response);
               return false;
             }
-            // Remove any message with empty message field and typing response
-            if (!msg.message && msg.response && msg.response.includes(typingMessagePattern)) {
-              console.log('🔄 Removing typing message by structure:', msg.id, msg.response);
-              return false;
-            }
+            // Keep all other messages (including user messages with empty message field)
+            console.log('🔄 Keeping message:', msg.id, msg.message, msg.fileName);
             return true;
           });
           
           console.log('🔄 Messages after filter:', filteredMessages.length);
+          console.log('🔄 Filtered messages:', filteredMessages.map(m => ({ id: m.id, message: m.message, fileName: m.fileName })));
           console.log('🔄 Adding AI message:', aiMessage.id, aiMessage.response);
           
           // Create new array with proper structure to ensure React re-renders
           const newMessages = [...filteredMessages];
           newMessages.push(aiMessage);
           
-          console.log('🔄 Final messages array:', newMessages.map(m => ({ id: m.id, response: m.response })));
+          console.log('🔄 Final messages array:', newMessages.map(m => ({ id: m.id, message: m.message, response: m.response, fileName: m.fileName })));
           
           // Force a re-render by ensuring the array is completely new
           return newMessages;
@@ -803,6 +820,14 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
     } finally {
       setIsSending(false);
       isSendingRef.current = false; // Reset ref after sending
+      
+      // Record interaction for personalization
+      try {
+        await recordInteraction();
+        console.log('✅ Interaction recorded for personalization');
+      } catch (error) {
+        console.warn('⚠️ Failed to record interaction:', error);
+      }
     }
   };
 
@@ -884,18 +909,41 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
 
 
   const handleImportTxt = async () => {
-    console.log('📁 handleImportTxt called');
-    try {
-      // Ensure in chat mode
-      if (!isInChat) {
-        console.log('📁 Not in chat mode, showing error');
-        Alert.alert(
-          language === 'vi' ? 'Lỗi' : 'Error',
-          language === 'vi' ? 'Hãy chọn cuộc trò chuyện trước' : 'Select a conversation first'
-        );
-        return;
-      }
+    console.log('📁 handleImportTxt called - Button pressed!');
+    console.log('📁 Current state - isInChat:', isInChat);
+    console.log('📁 Platform:', Platform.OS);
+    
+    // Ensure in chat mode
+    if (!isInChat) {
+      console.log('📁 Not in chat mode, showing error');
+      Alert.alert(
+        language === 'vi' ? 'Lỗi' : 'Error',
+        language === 'vi' ? 'Hãy chọn cuộc trò chuyện trước' : 'Select a conversation first'
+      );
+      return;
+    }
+    
+    console.log('📁 In chat mode, showing attachment options');
 
+    // Dismiss keyboard to prevent layout shifts
+    Keyboard.dismiss();
+
+    // Show mini table with attachment options
+    console.log('📁 Setting attachmentOptionsVisible to true');
+    setAttachmentOptionsVisible(true);
+    
+    // Animate slide up
+    Animated.spring(slideAnim, {
+      toValue: 0,
+      tension: 100,
+      friction: 8,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handleTextFileImport = async () => {
+    try {
+      console.log('📁 handleTextFileImport called - Text file option selected!');
       console.log('📁 In chat mode, proceeding with file import');
       let content: string = '';
       let fileName: string = 'conversation.txt';
@@ -961,7 +1009,9 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
         return;
       }
 
-        content = await FileSystem.readAsStringAsync(file.uri, { encoding: 'utf8' });
+        content = await FileSystem.readAsStringAsync(file.uri, { 
+          encoding: FileSystem.EncodingType.UTF8 
+        });
         fileName = file.name || 'conversation.txt';
       }
 
@@ -1032,6 +1082,21 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
       created_at: new Date().toISOString(),
       fileName: fileName, // Add fileName to the message
     };
+    
+    // Special handling for image messages - show user's text instead of image data
+    if (messageText.includes('[IMAGE:') && !fileName) {
+      // Extract the user's text from the image message
+      const textMatch = messageText.match(/\[IMAGE:.*?\]\s*(.*)/);
+      console.log('🖼️ Image message extraction:', {
+        messageText: messageText.substring(0, 100) + '...', // Log first 100 chars
+        textMatch: textMatch,
+        extractedText: textMatch ? textMatch[1] : null
+      });
+      const userText = textMatch ? textMatch[1].trim() : 'Sent an image';
+      userMessage.message = userText || 'Sent an image';
+      userMessage.fileName = 'image.jpg'; // Mark as image for backend processing
+      console.log('🖼️ Final user message:', userMessage.message);
+    }
 
     // Store the typing message ID for later removal
     const typingMessageId = Date.now() + 1;
@@ -1051,7 +1116,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
     const typingMessage: ChatMessage = {
       id: typingMessageId, // Use stored ID
       message: '',
-      response: language === 'vi' ? 'AI đang trả lời...' : 'AI is typing...',
+      response: language === 'vi' ? '🤖 AI đang trả lời...' : '🤖 AI is typing...',
       user_id: Number(user.id),
       created_at: new Date().toISOString(),
     };
@@ -1248,55 +1313,223 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
     console.log('📁 Custom modal dialog shown');
   };
 
-  const formatTime = (dateString: string) => {
-    if (!dateString) {
-      return '--:--';
-    }
-    
+  const pickImage = async () => {
     try {
-      // Parse the ISO string from backend (should be in UTC+8)
-      const date = new Date(dateString);
+      console.log('📸 pickImage called - Image option selected!');
+      console.log('📸 Opening document picker for images...');
       
-      // Check if date is valid
-      if (isNaN(date.getTime())) {
-        console.warn('Invalid date string:', dateString);
-        return '--:--';
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['image/*'],
+        multiple: false,
+        copyToCacheDirectory: true,
+      });
+
+      console.log('📸 Document picker result:', result);
+
+      if (result.canceled) {
+        console.log('📸 Image selection cancelled');
+        return;
       }
-      
-      // Check if the date is reasonable (not too old/future)
-      const now = new Date();
-      const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60);
-      
-      // If the date is more than 1 year in the past or future, it's likely invalid
-      if (Math.abs(diffInHours) > 8760) { // 8760 hours = 1 year
-        console.warn('Date seems invalid (too old/future):', dateString);
-        return '--:--';
+
+      const file = result.assets[0];
+      if (!file || !file.uri) {
+        Alert.alert(
+          language === 'vi' ? 'Lỗi' : 'Error',
+          language === 'vi' ? 'Không thể chọn ảnh' : 'Could not pick image'
+        );
+        return;
       }
+
+      console.log('📸 Selected image URI:', file.uri);
+      console.log('📸 File details:', {
+        name: file.name,
+        size: file.size,
+        type: file.mimeType,
+        uri: file.uri
+      });
       
-      // If the date is very close to epoch (1970), it's likely invalid
-      if (date.getFullYear() < 2000) {
-        console.warn('Date seems invalid (before year 2000):', dateString);
-        return '--:--';
-      }
+      // Set the selected image and show the image modal
+      setSelectedImage(file.uri);
+      setSelectedDocument(null);
+      setSelectedFileName(file.name || 'image.jpg');
+      setSelectedFileType('image');
+      setImageModalVisible(true);
+      setImageLoading(true);
+      setImageError(null);
       
-      // Format the time - the backend should be sending UTC+8 timestamps
-      if (diffInHours < 24) {
-        // Show time for messages within 24 hours
-        return date.toLocaleTimeString([], { 
-          hour: '2-digit', 
-          minute: '2-digit',
-          timeZone: 'Asia/Singapore' // Ensure we display in UTC+8
-        });
-      } else {
-        // Show date for older messages
-        return date.toLocaleDateString([], {
-          timeZone: 'Asia/Singapore' // Ensure we display in UTC+8
-        });
-      }
+      console.log('📸 Modal should be visible now, selectedImage:', file.uri);
     } catch (error) {
-      console.error('Error formatting time:', error, 'Date string:', dateString);
-      return '--:--';
+      console.error('❌ Error picking image:', error);
+      Alert.alert(
+        language === 'vi' ? 'Lỗi' : 'Error',
+        language === 'vi' ? 'Không thể chọn ảnh' : 'Could not pick image'
+      );
     }
+  };
+
+  const pickDocument = async () => {
+    try {
+      console.log('📄 pickDocument called - Document option selected!');
+      console.log('📄 Opening document picker for documents...');
+      
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['text/plain', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+        multiple: false,
+        copyToCacheDirectory: true,
+      });
+
+      console.log('📄 Document picker result:', result);
+
+      if (result.canceled) {
+        console.log('📄 Document selection cancelled');
+        return;
+      }
+
+      const file = result.assets[0];
+      if (!file || !file.uri) {
+        Alert.alert(
+          language === 'vi' ? 'Lỗi' : 'Error',
+          language === 'vi' ? 'Không thể chọn tài liệu' : 'Could not pick document'
+        );
+        return;
+      }
+
+      console.log('📄 Selected document URI:', file.uri);
+      console.log('📄 File details:', {
+        name: file.name,
+        size: file.size,
+        type: file.mimeType,
+        uri: file.uri
+      });
+      
+      // Set the selected document and show the modal
+      setSelectedImage(null);
+      setSelectedDocument(file.uri);
+      setSelectedFileName(file.name || 'document.txt');
+      setSelectedFileType('document');
+      setImageModalVisible(true);
+      setImageLoading(true);
+      setImageError(null);
+      
+      console.log('📄 Modal should be visible now, selectedDocument:', file.uri);
+    } catch (error) {
+      console.error('❌ Error picking document:', error);
+      Alert.alert(
+        language === 'vi' ? 'Lỗi' : 'Error',
+        language === 'vi' ? 'Không thể chọn tài liệu' : 'Could not pick document'
+      );
+    }
+  };
+
+  const sendImageWithMessage = async (imageUri: string, messageText: string) => {
+    try {
+      console.log('📸 Sending image with message:', messageText);
+      
+      setIsSending(true);
+      
+      // Convert image to base64 for sending
+      const base64 = await FileSystem.readAsStringAsync(imageUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      
+      // Create a message that includes both image and text
+      const imageMessage = `[IMAGE:${base64}] ${messageText}`;
+      
+      // Close modal immediately and return to conversation
+      setSelectedImage(null);
+      setSelectedDocument(null);
+      setSelectedFileName('');
+      setSelectedFileType('image');
+      setImageModalVisible(false);
+      setInputMessage('');
+      setImageLoading(false);
+      setImageError(null);
+      
+      // Scroll to bottom to show the new message
+      setTimeout(() => {
+        scrollRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+      
+      console.log('✅ Modal closed immediately - returning to conversation');
+      
+      // Send the message with image (don't await - let it run in background)
+      // Don't pass fileName so it shows the actual message text instead of file name
+      sendMessageWithContent(imageMessage).catch((error) => {
+        console.error('❌ Error sending image in background:', error);
+      Alert.alert(
+        language === 'vi' ? 'Lỗi' : 'Error',
+        language === 'vi' ? 'Không thể gửi ảnh' : 'Failed to send image'
+        );
+      });
+      
+    } catch (error) {
+      console.error('❌ Error preparing image:', error);
+      Alert.alert(
+        language === 'vi' ? 'Lỗi' : 'Error',
+        language === 'vi' ? 'Không thể chuẩn bị ảnh' : 'Failed to prepare image'
+      );
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const sendDocumentWithMessage = async (documentUri: string, messageText: string, fileName: string) => {
+    try {
+      console.log('📄 Sending document with message:', messageText, 'File:', fileName);
+      
+      setIsSending(true);
+      
+      // Read document content as text
+      const content = await FileSystem.readAsStringAsync(documentUri, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+      
+      // Create a message that includes both document content and text
+      const documentMessage = `[DOCUMENT:${fileName}] ${content} ${messageText}`;
+      
+      // Close modal immediately and return to conversation
+      setSelectedImage(null);
+      setSelectedDocument(null);
+      setSelectedFileName('');
+      setSelectedFileType('document');
+      setImageModalVisible(false);
+      setInputMessage('');
+      setImageLoading(false);
+      setImageError(null);
+      
+      // Scroll to bottom to show the new message
+      setTimeout(() => {
+        scrollRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+      
+      console.log('✅ Modal closed immediately - returning to conversation');
+      
+      // Send the message with document (don't await - let it run in background)
+      sendMessageWithContent(documentMessage).catch((error) => {
+        console.error('❌ Error sending document in background:', error);
+        Alert.alert(
+          language === 'vi' ? 'Lỗi' : 'Error',
+          language === 'vi' ? 'Không thể gửi tài liệu' : 'Failed to send document'
+        );
+      });
+      
+    } catch (error) {
+      console.error('❌ Error preparing document:', error);
+      Alert.alert(
+        language === 'vi' ? 'Lỗi' : 'Error',
+        language === 'vi' ? 'Không thể chuẩn bị tài liệu' : 'Failed to prepare document'
+      );
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  // Import the centralized time utility
+  const formatTime = (dateString: string) => {
+    const { formatSmartTime, getUserTimezone } = require('../utils/timeUtils');
+    return formatSmartTime(dateString, { 
+      timeZone: getUserTimezone() 
+    });
   };
 
   const formatDate = (dateString: string | null) => {
@@ -1315,22 +1548,8 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
 
   // Helper function to safely get date timestamp for sorting
   const getSafeTimestamp = (dateString: string): number => {
-    if (!dateString) return 0;
-    
-    try {
-      const date = new Date(dateString);
-      
-      // Check if date is valid
-      if (isNaN(date.getTime())) {
-        console.warn('getSafeTimestamp: Invalid date string for sorting:', dateString);
-        return 0;
-      }
-      
-      return date.getTime();
-    } catch (error) {
-      console.error('getSafeTimestamp: Error parsing date string:', error, 'Date string:', dateString);
-      return 0;
-    }
+    const { getSafeTimestamp: getSafeTimestampUtil } = require('../utils/timeUtils');
+    return getSafeTimestampUtil(dateString);
   };
 
   const getConversationsByAgent = () => {
@@ -1437,6 +1656,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
     const agent = allAgents.find(a => a.id === agentId);
     return agent ? agent.name : language === 'vi' ? 'Agent Không Xác Định' : 'Unknown Agent';
   };
+
 
   const handleConversationPress = (agentId: number) => {
     const agent = allAgents.find(a => a.id === agentId);
@@ -1634,7 +1854,6 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
             <View style={[styles.messageBubble, styles.userMessageBubble, { backgroundColor: theme.colors.primary }]}>
               {message.fileName ? (
                 // File attachment display
-                console.log('🎨 Rendering file attachment for:', message.fileName),
                 <View style={styles.fileAttachment}>
                   <View style={styles.fileIconContainer}>
                     <Icon name="description" size={24} color={theme.colors.surface} />
@@ -1650,7 +1869,6 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
                 </View>
               ) : (
                 // Regular text message
-                console.log('🎨 Rendering regular text message'),
                 <Text style={[styles.messageText, { color: theme.colors.surface }]}>
                   {message.message}
                 </Text>
@@ -1891,110 +2109,55 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
     const handleDeleteAgentFromConversation = async () => {
       if (!agent || !user) return;
       
-      if (isDefaultAgent) {
-        // For default agents, delete messages only
-        Alert.alert(
-          language === 'vi' ? 'Xóa Cuộc Trò Chuyện' : 'Delete Conversation',
-          language === 'vi' 
-            ? `Bạn có chắc chắn muốn xóa tất cả tin nhắn với "${agent.name}"?\n\nĐiều này sẽ xóa vĩnh viễn tất cả tin nhắn trong cuộc trò chuyện này. Agent sẽ vẫn tồn tại.`
-            : `Are you sure you want to delete all messages with "${agent.name}"?\n\nThis will permanently delete all messages in this conversation. The agent will remain available.`,
-          [
-            {
-              text: language === 'vi' ? 'Hủy' : 'Cancel',
-              style: 'cancel',
-            },
-            {
-              text: language === 'vi' ? 'Xóa Tin Nhắn' : 'Delete Messages',
-              style: 'destructive',
-              onPress: async () => {
-                try {
-                  // Delete all messages for this agent and user
-                  const messagesToDelete = chatHistory.filter(msg => msg.agent_id === agent.id);
-                  let deletedCount = 0;
-                  
-                  for (const message of messagesToDelete) {
-                    try {
-                      await apiService.deleteMessage(message.id, Number(user.id));
-                      deletedCount++;
-                    } catch (error) {
-                      console.error(`Error deleting message ${message.id}:`, error);
-                    }
+      // Always delete conversation (messages) regardless of agent type
+      Alert.alert(
+        language === 'vi' ? 'Xóa Cuộc Trò Chuyện' : 'Delete Conversation',
+        language === 'vi' 
+          ? `Bạn có chắc chắn muốn xóa cuộc trò chuyện với "${agent.name}"?\n\nĐiều này sẽ xóa vĩnh viễn toàn bộ cuộc trò chuyện này.`
+          : `Are you sure you want to delete the conversation with "${agent.name}"?\n\nThis will permanently delete the entire conversation.`,
+        [
+          {
+            text: language === 'vi' ? 'Hủy' : 'Cancel',
+            style: 'cancel',
+          },
+          {
+            text: language === 'vi' ? 'Xóa' : 'Delete',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                // Delete all messages for this agent and user
+                const messagesToDelete = chatHistory.filter(msg => msg.agent_id === agent.id);
+                let deletedCount = 0;
+                
+                for (const message of messagesToDelete) {
+                  try {
+                    await apiService.deleteMessage(message.id, Number(user.id));
+                    deletedCount++;
+                  } catch (error) {
+                    console.error(`Error deleting message ${message.id}:`, error);
                   }
-                  
-                  Alert.alert(
-                    language === 'vi' ? 'Thành công' : 'Success',
-                    language === 'vi' 
-                      ? `Đã xóa ${deletedCount} tin nhắn với "${agent.name}"`
-                      : `Successfully deleted ${deletedCount} messages with "${agent.name}"`
-                  );
-                  
-                  // Refresh conversation history
-                  loadChatHistory();
-                } catch (error) {
-                  console.error('Error deleting messages:', error);
-                  Alert.alert(
-                    language === 'vi' ? 'Lỗi' : 'Error', 
-                    language === 'vi' ? 'Không thể xóa tin nhắn. Vui lòng thử lại' : 'Failed to delete messages. Please try again.'
-                  );
                 }
+                
+                Alert.alert(
+                  language === 'vi' ? 'Thành công' : 'Success',
+                  language === 'vi' 
+                    ? `Đã xóa ${deletedCount} tin nhắn từ cuộc trò chuyện với "${agent.name}"`
+                    : `Successfully deleted ${deletedCount} messages from conversation with "${agent.name}"`
+                );
+                
+                // Refresh conversation history
+                loadChatHistory();
+              } catch (error) {
+                console.error('Error deleting conversation:', error);
+                Alert.alert(
+                  language === 'vi' ? 'Lỗi' : 'Error', 
+                  language === 'vi' ? 'Không thể xóa cuộc trò chuyện. Vui lòng thử lại' : 'Failed to delete conversation. Please try again.'
+                );
               }
             }
-          ]
-        );
-      } else {
-        // For custom agents, delete the agent and all messages
-        Alert.alert(
-          language === 'vi' ? 'Xóa Agent' : 'Delete Agent',
-          language === 'vi' 
-            ? `Bạn có chắc chắn muốn xóa "${agent.name}"?\n\nĐiều này sẽ xóa vĩnh viễn agent và tất cả tin nhắn liên quan. Hành động này không thể hoàn tác.`
-            : `Are you sure you want to delete "${agent.name}"?\n\nThis will permanently delete the agent and all related messages. This action cannot be undone.`,
-          [
-            {
-              text: language === 'vi' ? 'Hủy' : 'Cancel',
-              style: 'cancel',
-            },
-            {
-              text: language === 'vi' ? 'Xóa Agent' : 'Delete Agent',
-              style: 'destructive',
-              onPress: async () => {
-                try {
-                  const response = await apiService.deleteAgent(agent.id, Number(user.id));
-                  if (response.status === 200 && response.data) {
-                    Alert.alert(
-                      language === 'vi' ? 'Thành công' : 'Success',
-                      `${response.data.message}\n\n${language === 'vi' ? 'Agent' : 'Agent'} "${response.data.agent_name}" ${language === 'vi' ? 'và' : 'and'} ${response.data.messages_deleted} ${language === 'vi' ? 'tin nhắn đã được xóa' : 'messages have been deleted'}.`
-                    );
-                    // Refresh conversation history and agents list
-                    loadChatHistory();
-                    loadAllAgents();
-                  } else if (response.status === 403) {
-                    Alert.alert(
-                      language === 'vi' ? 'Lỗi' : 'Error', 
-                      response.error || (language === 'vi' ? 'Bạn không có quyền xóa agent này' : 'You do not have permission to delete this agent.')
-                    );
-                  } else if (response.status === 404) {
-                    Alert.alert(
-                      language === 'vi' ? 'Lỗi' : 'Error', 
-                      language === 'vi' ? 'Agent không tìm thấy' : 'Agent not found.'
-                    );
-                  } else {
-                    Alert.alert(
-                      language === 'vi' ? 'Lỗi' : 'Error', 
-                      response.error || (language === 'vi' ? 'Không thể xóa agent. Vui lòng thử lại' : 'Failed to delete agent. Please try again.')
-                    );
-                  }
-                } catch (error) {
-                  console.error('Error deleting agent:', error);
-                  Alert.alert(
-                    language === 'vi' ? 'Lỗi' : 'Error', 
-                    language === 'vi' ? 'Không thể xóa agent. Vui lòng kiểm tra kết nối và thử lại' : 'Failed to delete agent. Please check your connection and try again.'
-                  );
-                }
-              }
-            }
-          ]
-        );
-      }
+          }
+        ]
+      );
     };
     
     return (
@@ -2240,9 +2403,9 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
   }
 
   return (
+    <>
     <SafeAreaView 
       style={[styles.container, { backgroundColor: theme.type === 'dark' ? '#0F0F23' : '#667EEA' }]}
-      key={`chat-screen-${messageRefreshKey}`}
     >
       <StatusBar 
           barStyle="light-content"
@@ -2307,12 +2470,24 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
               )}
             </View>
 
-            <TouchableOpacity
-              style={[styles.headerActionButton, { backgroundColor: 'rgba(255,255,255,0.2)' }]}
-              onPress={() => setShowAgentSelector(true)}
-            >
-              <Icon name="smart-toy" size={20} color="white" />
-            </TouchableOpacity>
+            <View style={styles.headerActions}>
+          {/* Personalization Indicator */}
+          {personalizationData && personalizationData.total_interactions > 0 && (
+            <View style={styles.personalizationIndicator}>
+              <Icon name="tune" size={16} color="white" />
+              <Text style={styles.personalizationText}>
+                {personalizationData.total_interactions}
+              </Text>
+            </View>
+          )}
+              
+              <TouchableOpacity
+                style={[styles.headerActionButton, { backgroundColor: 'rgba(255,255,255,0.2)' }]}
+                onPress={() => setShowAgentSelector(true)}
+              >
+                <Icon name="smart-toy" size={20} color="white" />
+              </TouchableOpacity>
+            </View>
           </View>
         </LinearGradient>
       
@@ -2359,7 +2534,6 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
             contentContainerStyle={styles.messagesContent}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
-            key={`messages-${messageRefreshKey}`}
             onContentSizeChange={() => {
               console.log('📱 FlatList content size changed, messages length:', messages.length);
               console.log('📱 Should preserve scroll:', shouldPreserveScroll, 'Scroll position:', scrollPosition);
@@ -2417,28 +2591,37 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
             ) : messages.length === 0 ? (
               renderEmptyState()
             ) : (
-              messages.map((message, index) => (
+              messages.map((message, index) => {
+                // Skip rendering if both message and response are empty
+                if (!message.message && !message.response) {
+                  return null;
+                }
+                
+                return (
                 <React.Fragment key={message.id}>
-                  {/* User Message */}
+                    {/* User Message - only render if message exists */}
+                    {message.message && (
                   <ChatMessageBubble
                     message={message.message}
                     isUser={true}
-                    timestamp={formatTime(message.created_at)}
+                    timestamp={message.created_at}
                     agentId={selectedAgent?.id}
-                    animated={true}
+                        animated={!attachmentOptionsVisible}
                   />
-                  {/* AI Response */}
+                    )}
+                    {/* AI Response - only render if response exists */}
                   {message.response && (
                     <ChatMessageBubble
                       message={message.response}
                       isUser={false}
-                      timestamp={formatTime(message.created_at)}
+                      timestamp={message.created_at}
                       agentId={selectedAgent?.id}
-                      animated={true}
+                        animated={!attachmentOptionsVisible}
                     />
                   )}
                 </React.Fragment>
-              ))
+                );
+              })
             )}
           </ScrollView>
 
@@ -2446,12 +2629,18 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             style={styles.modernInputContainer}
+            enabled={!attachmentOptionsVisible}
+            keyboardVerticalOffset={0}
           >
             <ChatInput
                 value={inputMessage}
                 onChangeText={setInputMessage}
               onSend={sendMessage}
-              onAttach={handleImportTxt}
+              onAttach={() => {
+                console.log('🔘 Attachment button pressed!');
+                console.log('🔘 Current state - isSending:', isSending, 'isInChat:', isInChat);
+                handleImportTxt();
+              }}
               onSpeech={() => handleSpeechRecognized('')}
                 placeholder={language === 'vi' ? 'Nhập tin nhắn của bạn...' : 'Type your message...'}
                 disabled={isSending}
@@ -2543,6 +2732,136 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
         </View>
       </Modal>
 
+      {/* Image Import Modal */}
+      <Modal
+        visible={imageModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => {
+          setImageModalVisible(false);
+          setSelectedImage(null);
+          setImageLoading(false);
+          setImageError(null);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: theme.colors.surface }]}>
+            <Text style={[styles.modalTitle, { color: theme.colors.text }]}>
+              {selectedFileType === 'image' 
+                ? (language === 'vi' ? 'Chọn ảnh' : 'Select Image')
+                : (language === 'vi' ? 'Chọn tài liệu' : 'Select Document')
+              }
+            </Text>
+            
+            {(selectedImage || selectedDocument) && (
+              <View style={styles.imagePreviewContainer}>
+                <Text style={{ color: theme.colors.text, fontSize: 12, marginBottom: 8 }}>
+                  {selectedFileType === 'image' ? 'Image:' : 'Document:'} {selectedFileName}
+                </Text>
+                {imageLoading && (
+                  <Text style={{ color: theme.colors.textSecondary, fontSize: 14, marginBottom: 8 }}>
+                    Loading {selectedFileType}...
+                  </Text>
+                )}
+                {imageError && (
+                  <Text style={{ color: theme.colors.error || '#ff0000', fontSize: 14, marginBottom: 8 }}>
+                    Error: {imageError}
+                  </Text>
+                )}
+                {selectedFileType === 'image' && selectedImage && (
+                  <Image
+                    source={{ uri: selectedImage }}
+                    style={styles.imagePreview}
+                    resizeMode="contain"
+                    onError={(error) => {
+                      console.error('❌ Image display error:', error);
+                      setImageError('Failed to load image');
+                      setImageLoading(false);
+                    }}
+                    onLoad={() => {
+                      console.log('✅ Image loaded successfully:', selectedImage);
+                      setImageLoading(false);
+                      setImageError(null);
+                    }}
+                  />
+                )}
+                {selectedFileType === 'document' && selectedDocument && (
+                  <View style={[styles.documentPreview, { backgroundColor: theme.colors.background, borderColor: theme.colors.border }]}>
+                    <Icon name="description" size={48} color={theme.colors.primary} />
+                    <Text style={[styles.documentPreviewText, { color: theme.colors.text }]}>
+                      {selectedFileName}
+                    </Text>
+                    <Text style={[styles.documentPreviewSubtext, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' ? 'Tài liệu đã sẵn sàng để gửi' : 'Document ready to send'}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            )}
+            
+            <Text style={[styles.modalMessage, { color: theme.colors.textSecondary }]}>
+              {language === 'vi' 
+                ? `Nhập tin nhắn để gửi cùng với ${selectedFileType === 'image' ? 'ảnh' : 'tài liệu'}:`
+                : `Enter a message to send with the ${selectedFileType}:`
+              }
+            </Text>
+            
+            <TextInput
+              style={[styles.imageMessageInput, { 
+                backgroundColor: theme.colors.background,
+                color: theme.colors.text,
+                borderColor: theme.colors.border
+              }]}
+              placeholder={language === 'vi' ? 'Nhập tin nhắn...' : 'Type your message...'}
+              placeholderTextColor={theme.colors.textSecondary}
+              multiline={true}
+              numberOfLines={3}
+              onChangeText={setInputMessage}
+              value={inputMessage}
+            />
+            
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalCancelButton, { borderColor: theme.colors.border }]}
+                onPress={() => {
+                  setImageModalVisible(false);
+                  setSelectedImage(null);
+                  setInputMessage('');
+                  setImageLoading(false);
+                  setImageError(null);
+                }}
+              >
+                <Text style={[styles.modalButtonText, { color: theme.colors.textSecondary }]}>
+                  {language === 'vi' ? 'Hủy' : 'Cancel'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalPrimaryButton, { backgroundColor: theme.colors.primary }]}
+                onPress={() => {
+                  if (selectedFileType === 'image' && selectedImage) {
+                    sendImageWithMessage(selectedImage, inputMessage);
+                  } else if (selectedFileType === 'document' && selectedDocument) {
+                    sendDocumentWithMessage(selectedDocument, inputMessage, selectedFileName);
+                  }
+                }}
+                disabled={isSending}
+              >
+                <Text style={[styles.modalButtonText, { color: theme.colors.surface }]}>
+                  {isSending 
+                    ? (language === 'vi' ? 'Đang gửi...' : 'Sending...')
+                    : (language === 'vi' 
+                        ? (selectedFileType === 'image' ? 'Gửi ảnh' : 'Gửi tài liệu')
+                        : (selectedFileType === 'image' ? 'Send Image' : 'Send Document')
+                      )
+                  }
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+
       {/* Speech Test Modal */}
       <Modal
         visible={showSpeechTest}
@@ -2571,6 +2890,156 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }) => {
       )}
 
     </SafeAreaView>
+    
+    {/* Attachment Options Mini Table - Production Design */}
+      {attachmentOptionsVisible && (
+      <View style={styles.attachmentOverlay}>
+        <TouchableOpacity
+          style={styles.attachmentBackdrop}
+          activeOpacity={1}
+          onPress={() => {
+            console.log('📁 Backdrop pressed - closing');
+            // Animate slide down
+            Animated.timing(slideAnim, {
+              toValue: 300,
+              duration: 200,
+              useNativeDriver: true,
+            }).start(() => {
+            setAttachmentOptionsVisible(false);
+            });
+          }}
+        >
+          <Animated.View 
+            style={[
+              styles.attachmentOptionsContainer,
+              { transform: [{ translateY: slideAnim }] }
+            ]}
+          >
+            <View style={[styles.miniTableContent, { backgroundColor: theme.colors.surface }]}>
+              {/* Header */}
+              <View style={styles.miniTableHeader}>
+                <Text style={[styles.miniTableTitle, { color: theme.colors.text }]}>
+                  {language === 'vi' ? 'Đính kèm tệp' : 'Attach File'}
+              </Text>
+                <TouchableOpacity
+                  style={styles.closeButton}
+                  onPress={() => {
+                    // Animate slide down
+                    Animated.timing(slideAnim, {
+                      toValue: 300,
+                      duration: 200,
+                      useNativeDriver: true,
+                    }).start(() => {
+                      setAttachmentOptionsVisible(false);
+                    });
+                  }}
+                >
+                  <Icon name="close" size={18} color={theme.colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+
+              {/* Options */}
+              <View style={styles.miniTableOptions}>
+              <TouchableOpacity
+                style={[styles.miniTableOption, { borderColor: theme.colors.border }]}
+                onPress={() => {
+                  console.log('📁 Image option pressed');
+                    // Animate slide down
+                    Animated.timing(slideAnim, {
+                      toValue: 300,
+                      duration: 200,
+                      useNativeDriver: true,
+                    }).start(() => {
+                  setAttachmentOptionsVisible(false);
+                  pickImage();
+                    });
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.optionIcon, { backgroundColor: theme.colors.primary + '15' }]}>
+                    <Icon name="image" size={20} color={theme.colors.primary} />
+                  </View>
+                  <View style={styles.optionContent}>
+                    <Text style={[styles.optionTitle, { color: theme.colors.text }]}>
+                      {language === 'vi' ? 'Hình ảnh' : 'Image'}
+                </Text>
+                    <Text style={[styles.optionSubtitle, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' ? 'Chọn từ thư viện' : 'Choose from gallery'}
+                    </Text>
+                  </View>
+                  <Icon name="chevron-right" size={16} color={theme.colors.textSecondary} />
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={[styles.miniTableOption, { borderColor: theme.colors.border }]}
+                onPress={() => {
+                  console.log('📁 Document option pressed');
+                    // Animate slide down
+                    Animated.timing(slideAnim, {
+                      toValue: 300,
+                      duration: 200,
+                      useNativeDriver: true,
+                    }).start(() => {
+                  setAttachmentOptionsVisible(false);
+                  pickDocument();
+                    });
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.optionIcon, { backgroundColor: theme.colors.success + '15' }]}>
+                    <Icon name="description" size={20} color={theme.colors.success} />
+                  </View>
+                  <View style={styles.optionContent}>
+                    <Text style={[styles.optionTitle, { color: theme.colors.text }]}>
+                      {language === 'vi' ? 'Tài liệu' : 'Document'}
+                </Text>
+                    <Text style={[styles.optionSubtitle, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' ? 'Chọn tệp từ thiết bị' : 'Choose file from device'}
+                    </Text>
+            </View>
+                  <Icon name="chevron-right" size={16} color={theme.colors.textSecondary} />
+        </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.miniTableOption, { borderColor: theme.colors.border }]}
+          onPress={() => {
+                    console.log('📁 Camera option pressed');
+                    // Animate slide down
+                    Animated.timing(slideAnim, {
+                      toValue: 300,
+                      duration: 200,
+                      useNativeDriver: true,
+                    }).start(() => {
+                      setAttachmentOptionsVisible(false);
+                      // TODO: Implement camera functionality
+                      Alert.alert(
+                        language === 'vi' ? 'Tính năng sắp có' : 'Coming Soon',
+                        language === 'vi' ? 'Chụp ảnh sẽ có sẵn trong phiên bản tiếp theo' : 'Camera capture will be available in the next version'
+                      );
+            });
+          }}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.optionIcon, { backgroundColor: theme.colors.warning + '15' }]}>
+                    <Icon name="camera-alt" size={20} color={theme.colors.warning} />
+                  </View>
+                  <View style={styles.optionContent}>
+                    <Text style={[styles.optionTitle, { color: theme.colors.text }]}>
+                      {language === 'vi' ? 'Máy ảnh' : 'Camera'}
+                    </Text>
+                    <Text style={[styles.optionSubtitle, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' ? 'Chụp ảnh mới' : 'Take new photo'}
+                    </Text>
+                  </View>
+                  <Icon name="chevron-right" size={16} color={theme.colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Animated.View>
+        </TouchableOpacity>
+      </View>
+    )}
+    </>
   );
 };
 
@@ -3169,6 +3638,140 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
   },
+  // Attachment mini table styles - Production Design
+  attachmentOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 9999,
+    pointerEvents: 'box-none',
+  },
+  attachmentBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    paddingBottom: 100,
+    paddingHorizontal: 20,
+    pointerEvents: 'auto',
+  },
+  attachmentOptionsContainer: {
+    width: '100%',
+    maxWidth: 320,
+  },
+  miniTableContent: {
+    borderRadius: 16,
+    padding: 0,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.08)',
+    overflow: 'hidden',
+  },
+  miniTableHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.08)',
+  },
+  miniTableTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1E293B',
+  },
+  closeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.05)',
+  },
+  miniTableOptions: {
+    paddingVertical: 8,
+  },
+  miniTableOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderWidth: 0,
+    marginVertical: 0,
+    backgroundColor: 'transparent',
+  },
+  optionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  optionContent: {
+    flex: 1,
+  },
+  optionTitle: {
+    fontSize: 16,
+    fontWeight: '500',
+    marginBottom: 2,
+  },
+  optionSubtitle: {
+    fontSize: 13,
+    opacity: 0.7,
+  },
+  // Image modal styles
+  imagePreviewContainer: {
+    alignItems: 'center',
+    marginVertical: 16,
+  },
+  imagePreview: {
+    width: 200,
+    height: 200,
+    borderRadius: 8,
+    backgroundColor: '#f0f0f0',
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  documentPreview: {
+    width: 200,
+    height: 150,
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  documentPreviewText: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  documentPreviewSubtext: {
+    fontSize: 12,
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  imageMessageInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    marginVertical: 16,
+    fontSize: 16,
+    textAlignVertical: 'top',
+  },
   // File attachment styles
   fileAttachment: {
     flexDirection: 'row',
@@ -3196,6 +3799,26 @@ const styles = StyleSheet.create({
   fileSize: {
     fontSize: 12,
     opacity: 0.8,
+  },
+  // Personalization indicator styles
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  personalizationIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 4,
+  },
+  personalizationText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
   },
 });
 

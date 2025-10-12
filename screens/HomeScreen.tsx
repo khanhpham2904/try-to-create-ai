@@ -166,60 +166,23 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   const formatDate = (dateString: string | null) => {
     if (!dateString) return language === 'vi' ? 'Chưa có' : 'Never';
     
-    const date = new Date(dateString);
-    
-    // Check if date is valid
-    if (isNaN(date.getTime())) {
-      console.warn('Invalid date string:', dateString);
-      return language === 'vi' ? 'Không hợp lệ' : 'Invalid';
-    }
-    
-    return date.toLocaleDateString();
+    const { formatDate: formatDateUtil, getUserTimezone } = require('../utils/timeUtils');
+    return formatDateUtil(dateString, getUserTimezone());
   };
 
   const formatTime = (dateString: string) => {
     if (!dateString) return '--:--';
     
-    try {
-      // Parse the ISO string from backend (should be in UTC+8)
-      const date = new Date(dateString);
-      
-      // Check if date is valid
-      if (isNaN(date.getTime())) {
-        console.warn('Invalid date string:', dateString);
-        return '--:--';
-      }
-      
-      // Format the time - the backend should be sending UTC+8 timestamps
-      return date.toLocaleTimeString([], { 
-        hour: '2-digit', 
-        minute: '2-digit',
-        timeZone: 'Asia/Singapore' // Ensure we display in UTC+8
-      });
-    } catch (error) {
-      console.error('Error formatting time:', error, 'Date string:', dateString);
-      return '--:--';
-    }
+    const { formatTime: formatTimeUtil, getUserTimezone } = require('../utils/timeUtils');
+    return formatTimeUtil(dateString, { 
+      timeZone: getUserTimezone() 
+    });
   };
 
   // Helper function to safely get date timestamp for sorting
   const getSafeTimestamp = (dateString: string): number => {
-    if (!dateString) return 0;
-    
-    try {
-      const date = new Date(dateString);
-      
-      // Check if date is valid
-      if (isNaN(date.getTime())) {
-        console.warn('getSafeTimestamp: Invalid date string for sorting:', dateString);
-        return 0;
-      }
-      
-      return date.getTime();
-    } catch (error) {
-      console.error('getSafeTimestamp: Error parsing date string:', error, 'Date string:', dateString);
-      return 0;
-    }
+    const { getSafeTimestamp: getSafeTimestampUtil } = require('../utils/timeUtils');
+    return getSafeTimestampUtil(dateString);
   };
 
   const pingApi = async (showToast: boolean = true) => {
@@ -347,7 +310,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     const agent = allAgents.find(a => a.id === agentId);
     if (agent) {
       setSelectedAgent(agent);
-      navigation.navigate('Chat');
+      navigation.navigate('Chat', { agent: agent });
     }
   };
 
@@ -371,8 +334,8 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     Alert.alert(
       language === 'vi' ? 'Xóa Cuộc Trò Chuyện' : 'Delete Conversation',
       language === 'vi' 
-        ? `Bạn có chắc chắn muốn xóa cuộc trò chuyện "${conversationName}"?\n\nĐiều này sẽ xóa vĩnh viễn tất cả tin nhắn trong cuộc trò chuyện này.`
-        : `Are you sure you want to delete the conversation "${conversationName}"?\n\nThis will permanently delete all messages in this conversation.`,
+        ? `Bạn có chắc chắn muốn xóa cuộc trò chuyện "${conversationName}"?\n\nĐiều này sẽ xóa vĩnh viễn toàn bộ cuộc trò chuyện này.`
+        : `Are you sure you want to delete the conversation "${conversationName}"?\n\nThis will permanently delete the entire conversation.`,
       [
         {
           text: language === 'vi' ? 'Hủy' : 'Cancel',
@@ -383,12 +346,22 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
           style: 'destructive',
           onPress: async () => {
             try {
-              // Delete all messages in the conversation
-              const deletePromises = item.messages.map(message => 
-                apiService.deleteMessage(message.id, Number(user.id))
-              );
-              
-              await Promise.all(deletePromises);
+              if (item.chatboxId && item.chatboxId > 0) {
+                // Delete chatbox conversation
+                await apiService.deleteChatbox(item.chatboxId, Number(user.id));
+              } else if (item.agentId) {
+                // For agent conversations, delete all messages
+                const deletePromises = item.messages.map(message => 
+                  apiService.deleteMessage(message.id, Number(user.id))
+                );
+                await Promise.all(deletePromises);
+              } else {
+                // For general conversations (chatboxId === -1), delete all messages
+                const deletePromises = item.messages.map(message => 
+                  apiService.deleteMessage(message.id, Number(user.id))
+                );
+                await Promise.all(deletePromises);
+              }
               
               // Reload chat history to update the UI
               await loadChatHistory();

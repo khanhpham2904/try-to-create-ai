@@ -695,6 +695,18 @@ class ApiService {
   }
 
   // ============================================================================
+  // USER METHODS
+  // ============================================================================
+
+  async updateUser(userId: number, userData: { full_name?: string; email?: string }): Promise<ApiResponse<UserData>> {
+    console.log('👤 Updating user:', userId);
+    return this.makeRequest<UserData>(`/api/v1/users/${userId}`, {
+      method: 'PUT',
+      body: JSON.stringify(userData),
+    });
+  }
+
+  // ============================================================================
   // AUTHENTICATION METHODS
   // ============================================================================
 

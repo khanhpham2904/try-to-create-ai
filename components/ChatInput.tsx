@@ -18,11 +18,15 @@ interface ChatInputProps {
   onSend: () => void;
   onAttach?: () => void;
   onSpeech?: () => void;
+  onVoiceRecord?: () => void;
   placeholder?: string;
   disabled?: boolean;
   maxLength?: number;
   showAttach?: boolean;
   showSpeech?: boolean;
+  showVoiceRecord?: boolean;
+  isListening?: boolean;
+  isRecording?: boolean;
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({
@@ -31,11 +35,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onSend,
   onAttach,
   onSpeech,
+  onVoiceRecord,
   placeholder = "Type a message...",
   disabled = false,
   maxLength = 1000,
   showAttach = true,
   showSpeech = true,
+  showVoiceRecord = true,
+  isListening = false,
+  isRecording = false,
 }) => {
   const { theme } = useTheme();
   const [isFocused, setIsFocused] = useState(false);
@@ -189,14 +197,47 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           </TouchableOpacity>
         )}
 
-        {!value.trim() && showSpeech && (
+        {(!value.trim() || isListening) && showSpeech && (
           <TouchableOpacity
             onPress={onSpeech}
-            style={[styles.speechButton, { backgroundColor: theme.colors.success + '20' }]}
+            style={[
+              styles.speechButton, 
+              { 
+                backgroundColor: isListening 
+                  ? theme.colors.error + '20' 
+                  : theme.colors.success + '20' 
+              }
+            ]}
             disabled={disabled}
             activeOpacity={0.7}
           >
-            <Icon name="mic" size={20} color={theme.colors.success} />
+            <Icon 
+              name={isListening ? "mic" : "mic-none"} 
+              size={20} 
+              color={isListening ? theme.colors.error : theme.colors.success} 
+            />
+          </TouchableOpacity>
+        )}
+
+        {showVoiceRecord && (
+          <TouchableOpacity
+            onPress={onVoiceRecord}
+            style={[
+              styles.voiceRecordButton, 
+              { 
+                backgroundColor: isRecording 
+                  ? theme.colors.error + '20' 
+                  : theme.colors.primary + '20' 
+              }
+            ]}
+            disabled={disabled}
+            activeOpacity={0.7}
+          >
+            <Icon 
+              name={isRecording ? "fiber-manual-record" : "radio-button-unchecked"} 
+              size={20} 
+              color={isRecording ? theme.colors.error : theme.colors.primary} 
+            />
           </TouchableOpacity>
         )}
       </View>
@@ -249,6 +290,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   speechButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  voiceRecordButton: {
     width: 40,
     height: 40,
     borderRadius: 20,

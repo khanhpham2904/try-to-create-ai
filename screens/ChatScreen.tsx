@@ -29,7 +29,7 @@ import AgentCustomizer from '../components/AgentCustomizer';
 import AgentSelector from '../components/AgentSelector';
 import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system/legacy';
+import * as FileSystem from 'expo-file-system';
 import { SpeechToTextButton } from '../components/SpeechToTextButton';
 import { SpeechDiagnostic } from '../components/SpeechDiagnostic';
 import { ScrollView } from 'react-native';
@@ -38,6 +38,12 @@ import { AnimatedStatusIndicator } from '../components/AnimatedStatusIndicator';
 import { FloatingActionButton } from '../components/FloatingActionButton';
 import { ChatMessageBubble } from '../components/ChatMessageBubble';
 import { ChatInput } from '../components/ChatInput';
+import { useSpeechToText } from '../hooks/useSpeechToText';
+import { VoiceChatDemo } from '../components/VoiceChatDemo';
+import { WebVoiceDiagnostic } from '../components/WebVoiceDiagnostic';
+import { VoiceRecorder } from '../components/VoiceRecorder';
+import { InlineVoiceRecorder } from '../components/InlineVoiceRecorder';
+import { VoiceMessage } from '../components/VoiceMessage';
 
 interface ChatScreenProps {
   navigation: any;
@@ -96,6 +102,37 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
   const [showSpeechTest, setShowSpeechTest] = useState(false);
   const [lastNewChatTimestamp, setLastNewChatTimestamp] = useState<number | null>(null);
   const [lastExistingChatTimestamp, setLastExistingChatTimestamp] = useState<number | null>(null);
+  
+  // Voice chat mode state (removed - now using inline voice recording)
+  const [showVoiceDemo, setShowVoiceDemo] = useState(false);
+  const [showWebDiagnostic, setShowWebDiagnostic] = useState(false);
+  const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
+  const [showInlineVoiceRecorder, setShowInlineVoiceRecorder] = useState(false);
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  
+  // Note: TTS is now handled by backend gTTS - no frontend TTS needed
+  
+  // Speech-to-text hook
+  const { 
+    startListening, 
+    stopListening, 
+    isListening, 
+    recognizedText, 
+    error: sttError, 
+    isAvailable: sttAvailable 
+  } = useSpeechToText(language === 'vi' ? 'vi-VN' : 'en-US');
+
+  // Handle recognized speech text
+  useEffect(() => {
+    if (recognizedText && recognizedText.trim()) {
+      console.log('🎤 Speech recognized:', recognizedText);
+      setInputMessage(recognizedText.trim());
+      // Auto-send recognized text
+      setTimeout(() => {
+        sendMessage();
+      }, 500); // Small delay to ensure message is set
+    }
+  }, [recognizedText]);
 
   // Function to force message refresh
   const forceMessageRefresh = () => {
@@ -395,17 +432,33 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
             user_id: msg.user_id,
             agent_id: msg.agent_id,
             chatbox_id: msg.chatbox_id,
+            audio_id: msg.audio_id,
+            audio_data: msg.audio_data,
+            duration: msg.duration,
+            audio_format: msg.audio_format,
+            audio_response_id: msg.audio_response_id,
+            audio_response_data: msg.audio_response_data,
+            audio_response_duration: msg.audio_response_duration,
+            audio_response_format: msg.audio_response_format,
             created_at: msg.created_at,
           }));
           
+          // Remove duplicate messages by ID
+          const uniqueMessages = processedMessages.filter((msg, index, self) => 
+            index === self.findIndex(m => m.id === msg.id)
+          );
+          
+          console.log('📜 Removed duplicates:', processedMessages.length - uniqueMessages.length, 'duplicates found');
+          
           // Sort messages chronologically (oldest first, newest last)
-          const sortedMessages = processedMessages.sort((a, b) => {
+          const sortedMessages = uniqueMessages.sort((a, b) => {
             const dateA = getSafeTimestamp(a.created_at);
             const dateB = getSafeTimestamp(b.created_at);
             return dateA - dateB; // Ascending order (oldest first)
           });
           
           console.log('📜 Processed and sorted messages:', sortedMessages);
+          // Replace messages to prevent duplicates when loading chat history
           setMessages(sortedMessages);
         } else {
           console.log('📜 No messages found or invalid response format');
@@ -421,7 +474,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
         
         if (response.data && response.data.messages) {
           console.log('📜 Found', response.data.messages.length, 'messages in chatbox');
-          // Process messages to ensure proper format
+          // Process messages to ensure proper format with audio data
           let processedMessages = response.data.messages.map((msg: any) => ({
             id: msg.id,
             message: msg.message || '',
@@ -429,17 +482,29 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
             user_id: msg.user_id,
             agent_id: msg.agent_id,
             chatbox_id: msg.chatbox_id,
+            audio_id: msg.audio_id,
+            audio_data: msg.audio_data,
+            duration: msg.duration,
+            audio_format: msg.audio_format,
             created_at: msg.created_at,
           }));
           
+          // Remove duplicate messages by ID
+          const uniqueMessages = processedMessages.filter((msg, index, self) => 
+            index === self.findIndex(m => m.id === msg.id)
+          );
+          
+          console.log('📜 Removed chatbox duplicates:', processedMessages.length - uniqueMessages.length, 'duplicates found');
+          
           // Sort messages chronologically (oldest first, newest last)
-          const sortedMessages = processedMessages.sort((a, b) => {
+          const sortedMessages = uniqueMessages.sort((a, b) => {
             const dateA = getSafeTimestamp(a.created_at);
             const dateB = getSafeTimestamp(b.created_at);
             return dateA - dateB; // Ascending order (oldest first)
           });
           
           console.log('📜 Processed and sorted chatbox messages:', sortedMessages);
+          // Replace messages to prevent duplicates when loading chat history
           setMessages(sortedMessages);
         } else {
           console.log('📜 No messages found in chatbox or invalid response format');
@@ -477,17 +542,29 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
               user_id: msg.user_id,
               agent_id: msg.agent_id,
               chatbox_id: msg.chatbox_id,
+              audio_id: msg.audio_id,
+              audio_data: msg.audio_data,
+              duration: msg.duration,
+              audio_format: msg.audio_format,
               created_at: msg.created_at,
             }));
             
+            // Remove duplicate messages by ID
+            const uniqueMessages = processedMessages.filter((msg, index, self) => 
+              index === self.findIndex(m => m.id === msg.id)
+            );
+            
+            console.log('📜 Removed general duplicates:', processedMessages.length - uniqueMessages.length, 'duplicates found');
+            
             // Sort messages chronologically (oldest first, newest last)
-            const sortedMessages = processedMessages.sort((a, b) => {
+            const sortedMessages = uniqueMessages.sort((a, b) => {
               const dateA = getSafeTimestamp(a.created_at);
               const dateB = getSafeTimestamp(b.created_at);
               return dateA - dateB; // Ascending order (oldest first)
             });
             
             console.log('📜 Processed and sorted general messages:', sortedMessages);
+            // Replace messages to prevent duplicates when loading chat history
             setMessages(sortedMessages);
           } else {
             console.log('📜 No general messages found or invalid response format');
@@ -517,17 +594,29 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
               user_id: msg.user_id,
               agent_id: msg.agent_id,
               chatbox_id: msg.chatbox_id,
+              audio_id: msg.audio_id,
+              audio_data: msg.audio_data,
+              duration: msg.duration,
+              audio_format: msg.audio_format,
               created_at: msg.created_at,
             }));
             
+            // Remove duplicate messages by ID
+            const uniqueMessages = processedMessages.filter((msg, index, self) => 
+              index === self.findIndex(m => m.id === msg.id)
+            );
+            
+            console.log('📜 Removed general duplicates:', processedMessages.length - uniqueMessages.length, 'duplicates found');
+            
             // Sort messages chronologically (oldest first, newest last)
-            const sortedMessages = processedMessages.sort((a, b) => {
+            const sortedMessages = uniqueMessages.sort((a, b) => {
               const dateA = getSafeTimestamp(a.created_at);
               const dateB = getSafeTimestamp(b.created_at);
               return dateA - dateB; // Ascending order (oldest first)
             });
             
             console.log('📜 Processed and sorted general messages:', sortedMessages);
+            // Replace messages to prevent duplicates when loading chat history
             setMessages(sortedMessages);
           } else {
             console.log('📜 No general messages found or invalid response format');
@@ -600,7 +689,15 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
     const typingMessageId = Date.now() + 1;
 
     // Add user message immediately for real-time experience
-    setMessages(prev => [...prev, userMessage]);
+    setMessages(prev => {
+      // Check for duplicate messages by ID
+      const isDuplicate = prev.some(msg => msg.id === userMessage.id);
+      if (isDuplicate) {
+        console.log('🔄 Duplicate user message detected, skipping:', userMessage.id);
+        return prev;
+      }
+      return [...prev, userMessage];
+    });
     
     // Add a temporary "AI is typing" message
     const typingMessage: ChatMessage = {
@@ -610,7 +707,15 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
       user_id: Number(user.id),
       created_at: new Date().toISOString(),
     };
-    setMessages(prev => [...prev, typingMessage]);
+    setMessages(prev => {
+      // Check for duplicate typing messages
+      const isDuplicate = prev.some(msg => msg.id === typingMessage.id);
+      if (isDuplicate) {
+        console.log('🔄 Duplicate typing message detected, skipping:', typingMessage.id);
+        return prev;
+      }
+      return [...prev, typingMessage];
+    });
     
     // Safety timeout: remove typing message after 30 seconds if it's still there
     const typingTimeout = setTimeout(() => {
@@ -699,6 +804,10 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
           user_id: Number(user.id), // Same user_id but with response
           created_at: (response.data && response.data.created_at) || new Date().toISOString(), // Fallback timestamp
           agent_id: (response.data && response.data.agent_id) || selectedAgent?.id, // Include agent ID
+          audio_response_id: response.data?.audio_response_id,
+          audio_response_data: response.data?.audio_response_data,
+          audio_response_duration: response.data?.audio_response_duration,
+          audio_response_format: response.data?.audio_response_format,
         };
         
         console.log('💬 Created AI message:', aiMessage);
@@ -755,6 +864,9 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
         
         // Log response length for debugging
         console.log(`💬 AI Response length: ${responseLength} characters`);
+        
+        // Note: TTS is now handled by backend gTTS - no need for frontend TTS
+        console.log('🔊 Text message processed - TTS handled by backend gTTS');
       }
       
       // Clear the typing timeout since we got a response
@@ -1010,7 +1122,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
       }
 
         content = await FileSystem.readAsStringAsync(file.uri, { 
-          encoding: FileSystem.EncodingType.UTF8 
+          encoding: 'utf8' as any
         });
         fileName = file.name || 'conversation.txt';
       }
@@ -1025,10 +1137,197 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
     }
   };
 
-  const handleSpeechRecognized = (text: string) => {
-    console.log('🎤 Speech recognized:', text);
-    if (text && text.trim()) {
-      setInputMessage(text.trim());
+  const handleVoiceMessageComplete = async (audioFile: File | Blob | string, duration: number) => {
+    console.log('🎤 Voice message recorded:', audioFile, 'Duration:', duration);
+    
+    try {
+      // Add typing indicator immediately
+      const typingMessage: ChatMessage = {
+        id: Date.now(),
+        message: '',
+        response: language === 'vi' ? '🤖 AI đang xử lý tin nhắn giọng nói...' : '🤖 AI is processing voice message...',
+        user_id: Number(user.id),
+        created_at: new Date().toISOString(),
+      };
+      setMessages(prev => [...prev, typingMessage]);
+
+      // Send audio to backend for speech-to-text processing
+      try {
+        let response;
+        
+        // Use multipart upload for File/Blob, fallback to base64 for string URIs
+        if (audioFile instanceof File || audioFile instanceof Blob) {
+          // Use multipart upload
+          console.log('🎤 Using multipart upload for audio file');
+          response = await apiService.uploadVoiceMessage(
+            Number(user.id),
+            audioFile,
+            audioFile instanceof File ? audioFile.name.split('.').pop() || 'wav' : 'webm',
+            selectedAgent?.id,
+            selectedChatbox?.id,
+            duration
+          );
+        } else {
+          // Fallback to base64 for backward compatibility
+          console.log('🎤 Using base64 upload for audio URI');
+          let audioData: string;
+          let audioFormat: string = 'wav';
+          
+          if (Platform.OS === 'web') {
+            // For web, audioFile is a blob URL string
+            const response = await fetch(audioFile);
+            const arrayBuffer = await response.arrayBuffer();
+            const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+            audioData = base64;
+            audioFormat = 'webm';
+          } else {
+            // For mobile, read file and convert to base64
+            const fileInfo = await FileSystem.getInfoAsync(audioFile);
+            if (fileInfo.exists) {
+              const base64 = await FileSystem.readAsStringAsync(audioFile, {
+                encoding: 'base64' as any,
+              });
+              audioData = base64;
+              audioFormat = 'm4a';
+            } else {
+              throw new Error('Audio file not found');
+            }
+          }
+          
+          response = await apiService.sendVoiceMessage(
+            Number(user.id),
+            audioData,
+            audioFormat,
+            selectedAgent?.id,
+            selectedChatbox?.id,
+            audioFile,
+            duration
+          );
+        }
+
+        if (response.data) {
+          // Remove typing message
+          setMessages(prev => prev.filter(msg => msg.id !== typingMessage.id));
+
+          // Add the user's voice message with audio data from backend
+          const userVoiceMessage: ChatMessage = {
+            id: response.data.id || Date.now() + 1,
+            message: response.data.message, // Transcribed text
+            response: '',
+            user_id: Number(user.id),
+            created_at: response.data.created_at || new Date().toISOString(),
+            audio_id: response.data.audio_id,
+            audio_data: response.data.audio_data,
+            duration: response.data.duration,
+            audio_format: response.data.audio_format,
+          };
+
+          // Add AI response with audio data
+          const aiMessage: ChatMessage = {
+            id: (response.data.id || Date.now() + 1) + 1,
+            message: '',
+            response: response.data.response,
+            user_id: Number(user.id),
+            created_at: response.data.created_at || new Date().toISOString(),
+            agent_id: response.data.agent_id || selectedAgent?.id,
+            audio_response_id: response.data.audio_response_id,
+            audio_response_data: response.data.audio_response_data,
+            audio_response_duration: response.data.audio_response_duration,
+            audio_response_format: response.data.audio_response_format,
+          };
+
+          setMessages(prev => [...prev, userVoiceMessage, aiMessage]);
+
+          // Note: TTS is now handled by backend gTTS - no need for frontend TTS
+          console.log('🔊 Voice message processed - TTS handled by backend gTTS');
+        }
+      } catch (error) {
+        console.error('❌ Error processing voice message:', error);
+        // Remove typing message and show error
+        setMessages(prev => prev.filter(msg => msg.id !== typingMessage.id));
+        
+        Alert.alert(
+          language === 'vi' ? 'Lỗi Xử Lý' : 'Processing Error',
+          language === 'vi' 
+            ? 'Không thể xử lý tin nhắn giọng nói. Vui lòng thử lại.'
+            : 'Cannot process voice message. Please try again.',
+          [{ text: language === 'vi' ? 'OK' : 'OK' }]
+        );
+      }
+
+      // Close voice recorder
+      setShowVoiceRecorder(false);
+
+    } catch (error) {
+      console.error('❌ Error handling voice message:', error);
+      Alert.alert(
+        language === 'vi' ? 'Lỗi' : 'Error',
+        language === 'vi' 
+          ? 'Không thể xử lý tin nhắn giọng nói.'
+          : 'Cannot process voice message.',
+        [{ text: language === 'vi' ? 'OK' : 'OK' }]
+      );
+    }
+  };
+
+  const handleVoiceRecorderCancel = () => {
+    setShowVoiceRecorder(false);
+  };
+
+  const handleInlineVoiceRecord = () => {
+    console.log('🎤 Inline voice record button pressed');
+    setShowInlineVoiceRecorder(true);
+    setIsRecordingVoice(true);
+  };
+
+  const handleInlineVoiceRecorderCancel = () => {
+    setShowInlineVoiceRecorder(false);
+    setIsRecordingVoice(false);
+  };
+
+  const handleInlineVoiceMessageComplete = async (audioFile: File | Blob | string, duration: number) => {
+    console.log('🎤 Inline voice message recorded:', audioFile, 'Duration:', duration);
+    
+    // Close the inline recorder
+    setShowInlineVoiceRecorder(false);
+    setIsRecordingVoice(false);
+    
+    // Use the same logic as the full-screen voice recorder
+    await handleVoiceMessageComplete(audioFile, duration);
+  };
+
+  const handleSpeechButtonPress = async () => {
+    // Speech-to-text functionality
+    console.log('🎤 Speech button pressed, isListening:', isListening);
+    
+    if (!sttAvailable) {
+      Alert.alert(
+        language === 'vi' ? 'Tính Năng Không Khả Dụng' : 'Feature Not Available',
+        language === 'vi' 
+          ? 'Nhận dạng giọng nói không khả dụng trên thiết bị này.'
+          : 'Speech recognition is not available on this device.',
+        [{ text: language === 'vi' ? 'OK' : 'OK' }]
+      );
+      return;
+    }
+
+    try {
+      if (isListening) {
+        await stopListening();
+        console.log('🎤 Stopped listening');
+      } else {
+        await startListening();
+        console.log('🎤 Started listening');
+      }
+    } catch (error) {
+      console.error('❌ Speech recognition error:', error);
+      Alert.alert(
+        language === 'vi' ? 'Lỗi Nhận Dạng Giọng Nói' : 'Speech Recognition Error',
+        language === 'vi' 
+          ? 'Không thể bắt đầu nhận dạng giọng nói.'
+          : 'Cannot start speech recognition.',
+        [{ text: language === 'vi' ? 'OK' : 'OK' }]
+      );
     }
   };
 
@@ -1429,7 +1728,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
       
       // Convert image to base64 for sending
       const base64 = await FileSystem.readAsStringAsync(imageUri, {
-        encoding: FileSystem.EncodingType.Base64,
+        encoding: 'base64' as any,
       });
       
       // Create a message that includes both image and text
@@ -1481,7 +1780,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
       
       // Read document content as text
       const content = await FileSystem.readAsStringAsync(documentUri, {
-        encoding: FileSystem.EncodingType.UTF8,
+        encoding: 'utf8' as any,
       });
       
       // Create a message that includes both document content and text
@@ -1893,20 +2192,15 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
             <View style={styles.aiAvatar}>
               <Icon name="smart-toy" size={20} color={theme.colors.primary} />
             </View>
-            <View style={[styles.messageBubble, styles.aiMessageBubble, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-              <Text style={[styles.messageText, { color: theme.colors.text }]}>
-                {message.response}
-              </Text>
-              {/* Debug info - remove this after testing */}
-              {__DEV__ && (
-                <Text style={[styles.messageTimestamp, { color: theme.colors.textSecondary, fontSize: 10 }]}>
-                  Length: {message.response?.length || 0} chars
-                </Text>
-              )}
-              <Text style={[styles.messageTimestamp, { color: theme.colors.textSecondary }]}>
-                {formatTime(message.created_at)}
-              </Text>
-            </View>
+            <ChatMessageBubble
+              message={message}
+              response={message.response}
+              isUser={false}
+              timestamp={message.created_at}
+              agentId={selectedAgent?.id}
+              animated={!attachmentOptionsVisible}
+              isLegacyVoiceMessage={false}
+            />
             <TouchableOpacity
               style={styles.deleteButton}
               onPress={() => deleteMessage(message.id)}
@@ -1972,20 +2266,15 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
           <View style={styles.aiAvatar}>
             <Icon name="smart-toy" size={20} color={theme.colors.primary} />
           </View>
-          <View style={[styles.messageBubble, styles.aiMessageBubble, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-            <Text style={[styles.messageText, { color: theme.colors.text }]}>
-              {message.response}
-            </Text>
-            {/* Debug info - remove this after testing */}
-            {__DEV__ && (
-              <Text style={[styles.messageTimestamp, { color: theme.colors.textSecondary, fontSize: 10 }]}>
-                Length: {message.response?.length || 0} chars
-              </Text>
-            )}
-            <Text style={[styles.messageTimestamp, { color: theme.colors.textSecondary }]}>
-              {formatTime(message.created_at)}
-            </Text>
-          </View>
+          <ChatMessageBubble
+            message={message}
+            response={message.response}
+            isUser={false}
+            timestamp={message.created_at}
+            agentId={selectedAgent?.id}
+            animated={!attachmentOptionsVisible}
+            isLegacyVoiceMessage={false}
+          />
           <TouchableOpacity
             style={styles.deleteButton}
             onPress={() => deleteMessage(message.id)}
@@ -2481,6 +2770,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
             </View>
           )}
               
+              
               <TouchableOpacity
                 style={[styles.headerActionButton, { backgroundColor: 'rgba(255,255,255,0.2)' }]}
                 onPress={() => setShowAgentSelector(true)}
@@ -2602,21 +2892,25 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
                     {/* User Message - only render if message exists */}
                     {message.message && (
                   <ChatMessageBubble
-                    message={message.message}
+                    message={message}
+                    response={message.response}
                     isUser={true}
                     timestamp={message.created_at}
                     agentId={selectedAgent?.id}
-                        animated={!attachmentOptionsVisible}
+                    animated={!attachmentOptionsVisible}
+                    isLegacyVoiceMessage={false}
                   />
                     )}
                     {/* AI Response - only render if response exists */}
                   {message.response && (
                     <ChatMessageBubble
-                      message={message.response}
+                      message={message}
+                      response={message.response}
                       isUser={false}
                       timestamp={message.created_at}
                       agentId={selectedAgent?.id}
-                        animated={!attachmentOptionsVisible}
+                      animated={!attachmentOptionsVisible}
+                      isLegacyVoiceMessage={false}
                     />
                   )}
                 </React.Fragment>
@@ -2629,7 +2923,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             style={styles.modernInputContainer}
-            enabled={!attachmentOptionsVisible}
+            enabled={!attachmentOptionsVisible && !showInlineVoiceRecorder}
             keyboardVerticalOffset={0}
           >
             <ChatInput
@@ -2641,11 +2935,19 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
                 console.log('🔘 Current state - isSending:', isSending, 'isInChat:', isInChat);
                 handleImportTxt();
               }}
-              onSpeech={() => handleSpeechRecognized('')}
-                placeholder={language === 'vi' ? 'Nhập tin nhắn của bạn...' : 'Type your message...'}
+              onSpeech={handleSpeechButtonPress}
+              onVoiceRecord={handleInlineVoiceRecord}
+                placeholder={
+                  isListening
+                    ? (language === 'vi' ? 'Đang nghe...' : 'Listening...')
+                    : (language === 'vi' ? 'Nhập tin nhắn của bạn...' : 'Type your message...')
+                }
                 disabled={isSending}
               showAttach={true}
               showSpeech={true}
+              showVoiceRecord={true}
+              isListening={isListening}
+              isRecording={isRecordingVoice}
             />
           </KeyboardAvoidingView>
         </>
@@ -2870,6 +3172,45 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
       >
         <SpeechDiagnostic onClose={() => setShowSpeechTest(false)} />
       </Modal>
+
+      {/* Voice Chat Demo Modal */}
+      <Modal
+        visible={showVoiceDemo}
+        animationType="slide"
+        presentationStyle="pageSheet"
+      >
+        <VoiceChatDemo onClose={() => setShowVoiceDemo(false)} />
+      </Modal>
+
+      {/* Web Voice Diagnostic Modal */}
+      <Modal
+        visible={showWebDiagnostic}
+        animationType="slide"
+        presentationStyle="pageSheet"
+      >
+        <WebVoiceDiagnostic onClose={() => setShowWebDiagnostic(false)} />
+      </Modal>
+
+      {/* Voice Recorder Modal */}
+      <Modal
+        visible={showVoiceRecorder}
+        animationType="slide"
+        presentationStyle="pageSheet"
+      >
+        <VoiceRecorder
+          onRecordingComplete={handleVoiceMessageComplete}
+          onCancel={handleVoiceRecorderCancel}
+          maxDuration={60}
+        />
+      </Modal>
+
+      {/* Inline Voice Recorder */}
+      <InlineVoiceRecorder
+        isVisible={showInlineVoiceRecorder}
+        onRecordingComplete={handleInlineVoiceMessageComplete}
+        onCancel={handleInlineVoiceRecorderCancel}
+        maxDuration={60}
+      />
 
       {/* Floating Action Button for New Chat */}
       {!isInChat && (

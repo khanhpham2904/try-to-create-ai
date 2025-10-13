@@ -42,6 +42,14 @@ export interface ChatMessage {
   user_id: number;
   chatbox_id?: number;
   agent_id?: number;
+  audio_id?: number;
+  audio_data?: string;
+  duration?: number;
+  audio_format?: string;
+  audio_response_id?: number;
+  audio_response_data?: string;
+  audio_response_duration?: number;
+  audio_response_format?: string;
   message: string;
   response: string;
   created_at: string;
@@ -61,6 +69,14 @@ export interface ChatMessageWithAgent {
   user_id: number;
   chatbox_id?: number;
   agent_id?: number;
+  audio_id?: number;
+  audio_data?: string;
+  duration?: number;
+  audio_format?: string;
+  audio_response_id?: number;
+  audio_response_data?: string;
+  audio_response_duration?: number;
+  audio_response_format?: string;
   message: string;
   response: string;
   context_used?: string;
@@ -179,11 +195,26 @@ class NetworkUtils {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeout);
       
-      const headers = {
-        'Content-Type': 'application/json',
+      const defaultHeaders: Record<string, string> = {
         ...getAndroidHeaders(),
+      };
+      
+      // Only add Content-Type if not explicitly overridden
+      if (!options.headers || !('Content-Type' in (options.headers as Record<string, string>))) {
+        defaultHeaders['Content-Type'] = 'application/json';
+      }
+      
+      const headers = {
+        ...defaultHeaders,
         ...(options.headers as Record<string, string>),
       };
+      
+      // Remove undefined values
+      Object.keys(headers).forEach(key => {
+        if (headers[key] === undefined) {
+          delete headers[key];
+        }
+      });
       
       fetch(resource, { 
         ...options, 
@@ -501,6 +532,62 @@ class ApiService {
         ...(agentId && { agent_id: agentId })
       }),
     });
+  }
+
+  async sendVoiceMessage(
+    userId: number,
+    audioData: string, // Base64 encoded audio
+    audioFormat: string = 'wav',
+    agentId?: number,
+    chatboxId?: number,
+    audioUri?: string,
+    duration?: number
+  ): Promise<ApiResponse<ChatMessageWithAgent & { audio_id?: number; audio_data?: string; duration?: number; audio_format?: string }>> {
+    console.log('🎤 Sending voice message for user:', userId);
+    
+    return this.makeRequest<ChatMessageWithAgent>('/api/v1/voice/process', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: userId,
+        audio_data: audioData,
+        audio_format: audioFormat,
+        agent_id: agentId,
+        chatbox_id: chatboxId,
+        audio_uri: audioUri,
+        duration: duration
+      }),
+    });
+  }
+
+  async uploadVoiceMessage(
+    userId: number,
+    audioFile: File | Blob,
+    audioFormat: string = 'wav',
+    agentId?: number,
+    chatboxId?: number,
+    duration?: number
+  ): Promise<ApiResponse<ChatMessageWithAgent & { audio_id?: number; audio_data?: string; duration?: number; audio_format?: string }>> {
+    console.log('🎤 Uploading voice message file for user:', userId);
+    
+    // Create FormData for multipart upload
+    const formData = new FormData();
+    formData.append('file', audioFile);
+    formData.append('user_id', userId.toString());
+    if (agentId) formData.append('agent_id', agentId.toString());
+    if (chatboxId) formData.append('chatbox_id', chatboxId.toString());
+    if (duration) formData.append('duration', duration.toString());
+    
+    // Use extended timeout for file uploads (2 minutes)
+    const fileUploadTimeout = 120000; // 2 minutes
+    
+    return this.makeRequestWithCustomTimeout<ChatMessageWithAgent>('/api/v1/voice/upload', {
+      method: 'POST',
+      body: formData,
+      headers: {
+        // Override default Content-Type to allow FormData boundary
+        'Content-Type': undefined,
+      },
+    }, fileUploadTimeout);
   }
 
   async sendMessageExternalAPI(

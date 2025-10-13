@@ -12,26 +12,36 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useTheme } from '../theme/ThemeContext';
+import { AudioMessageBubble } from './AudioMessageBubble';
+import { VoiceMessage } from './VoiceMessage';
+import { ChatMessage } from '../services/api';
 
 interface ChatMessageBubbleProps {
-  message: string;
+  message: ChatMessage | string; // Support both ChatMessage object and string for backward compatibility
+  response?: string; // Add response field for transcribed text
   isUser: boolean;
   timestamp?: string;
   isTyping?: boolean;
   agentId?: number;
   onPress?: () => void;
   animated?: boolean;
+  isLegacyVoiceMessage?: boolean;
 }
 
 export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
   message,
+  response,
   isUser,
   timestamp,
   isTyping = false,
   agentId,
   onPress,
   animated = true,
+  isLegacyVoiceMessage = false,
 }) => {
+  // Handle both string and ChatMessage object
+  const messageText = typeof message === 'string' ? message : (isUser ? message.message : message.response);
+  const messageObj = typeof message === 'string' ? null : message;
   const { theme } = useTheme();
   const slideAnim = useRef(new Animated.Value(isUser ? 50 : -50)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -141,6 +151,10 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
     return text.startsWith('[DOCUMENT:') && text.includes(']');
   };
 
+  const isVoiceMessage = (text: string) => {
+    return text.startsWith('[VOICE_MESSAGE:') && text.includes(']');
+  };
+
   const extractImageAndText = (text: string) => {
     if (isImageMessage(text)) {
       const imageMatch = text.match(/^\[IMAGE:([^\]]+)\]\s*(.*)$/);
@@ -192,6 +206,112 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
     }
   };
 
+  // Debug logging for message object
+  console.log('🔍 ChatMessageBubble debug:', {
+    messageType: typeof message,
+    messageObj: messageObj,
+    hasAudioId: messageObj?.audio_id,
+    hasAudioData: messageObj?.audio_data,
+    hasAudioResponseId: messageObj?.audio_response_id,
+    hasAudioResponseData: messageObj?.audio_response_data,
+    audioId: messageObj?.audio_id,
+    audioDataLength: messageObj?.audio_data?.length,
+    audioResponseId: messageObj?.audio_response_id,
+    audioResponseDataLength: messageObj?.audio_response_data?.length,
+    isUser
+  });
+
+  // Check if message has audio_response_id (AI audio response) - PRIORITY
+  if (messageObj && messageObj.audio_response_id && messageObj.audio_response_data && !isUser) {
+    console.log('🎵 AI Audio response detected (database format):', {
+      audio_response_id: messageObj.audio_response_id,
+      duration: messageObj.audio_response_duration,
+      audio_format: messageObj.audio_response_format,
+      isUser
+    });
+    
+    // Convert base64 audio response data to data URI
+    const audioUri = `data:audio/${messageObj.audio_response_format || 'wav'};base64,${messageObj.audio_response_data}`;
+    
+    return (
+      <VoiceMessage
+        audioUri={audioUri}
+        duration={messageObj.audio_response_duration || 0}
+        isUser={false} // AI responses are always bot messages
+        timestamp={timestamp}
+        animated={animated}
+        transcribedText={messageObj.response} // Use response as transcribed text
+      />
+    );
+  }
+
+  // Check if message has audio_id (user voice message) - SECONDARY
+  if (messageObj && messageObj.audio_id && messageObj.audio_data && isUser) {
+    console.log('🎵 User Audio message detected (database format):', {
+      audio_id: messageObj.audio_id,
+      duration: messageObj.duration,
+      audio_format: messageObj.audio_format,
+      isUser
+    });
+    
+    // Convert base64 audio data to data URI
+    const audioUri = `data:audio/${messageObj.audio_format || 'webm'};base64,${messageObj.audio_data}`;
+    
+    return (
+      <VoiceMessage
+        audioUri={audioUri}
+        duration={messageObj.duration || 0}
+        isUser={true} // User messages are always user messages
+        timestamp={timestamp}
+        animated={animated}
+        transcribedText={messageObj.message} // Use message as transcribed text
+      />
+    );
+  }
+
+  // Legacy voice message format (fallback for old messages)
+  if (isVoiceMessage(messageText)) {
+    const voiceMatch = messageText.match(/^\[VOICE_MESSAGE:([^:]+):(\d+)\]$/);
+    if (voiceMatch) {
+      const audioUri = voiceMatch[1];
+      const duration = parseInt(voiceMatch[2]);
+      
+      console.log('🎵 Legacy voice message detected:', {
+        message: messageText,
+        audioUri,
+        duration,
+        isUser
+      });
+      
+      return (
+        <VoiceMessage
+          audioUri={audioUri}
+          duration={duration}
+          isUser={isUser} // Keep original isUser value for legacy messages
+          timestamp={timestamp}
+          animated={animated}
+          transcribedText={response} // Pass transcribed text from response field
+        />
+      );
+    }
+  }
+
+  // If this is a voice message (legacy), render the audio bubble instead
+  if (isLegacyVoiceMessage) {
+    return (
+      <AudioMessageBubble
+        message={messageText}
+        isUser={isUser}
+        timestamp={timestamp}
+        isTyping={isTyping}
+        agentId={agentId}
+        onPress={onPress}
+        animated={animated}
+        duration={3} // Default duration, could be passed as prop
+      />
+    );
+  }
+
   const Bubble = () => (
     <Animated.View
       style={animated && {
@@ -225,7 +345,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
             )}
             
             {(() => {
-              const { hasImage, imageData, messageText, hasDocument, documentData } = extractImageAndText(message);
+              const { hasImage, imageData, messageText: extractedText, hasDocument, documentData } = extractImageAndText(messageText);
               
               return (
                 <>
@@ -253,12 +373,12 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
                     </View>
                   )}
                   
-                  {messageText && (
+                  {extractedText && (
                     <>
-                      {isLink(messageText) ? (
-                        <TouchableOpacity onPress={() => handlePress(messageText)}>
+                      {isLink(extractedText) ? (
+                        <TouchableOpacity onPress={() => handlePress(extractedText)}>
                           <Text style={[styles.messageText, { color: isUser ? 'white' : theme.colors.info, textDecorationLine: 'underline' }]}>
-                            {messageText}
+                            {extractedText}
                           </Text>
                           <View style={styles.linkIcon}>
                             <Icon name="open-in-new" size={12} color={isUser ? 'white' : theme.colors.info} />
@@ -266,7 +386,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
                         </TouchableOpacity>
                       ) : (
                         <Text style={[styles.messageText, { color: getTextColor() }]}>
-                          {messageText}
+                          {extractedText}
                         </Text>
                       )}
                     </>
@@ -287,7 +407,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
     </Animated.View>
   );
 
-  if (onPress && !isLink(message)) {
+  if (onPress && !isLink(messageText)) {
     return (
       <TouchableOpacity onPress={onPress} activeOpacity={0.9}>
         <Bubble />

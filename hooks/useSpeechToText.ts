@@ -22,11 +22,17 @@ export const useSpeechToText = (languageCode: string = 'en-US'): SpeechToTextHoo
     if (Platform.OS === 'web') {
       // Check for Web Speech API support
       if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-        setIsAvailable(true);
-        console.log(' Web Speech API is available');
+        // Additional check for HTTPS requirement
+        if (window.location.protocol === 'https:' || window.location.hostname === 'localhost') {
+          setIsAvailable(true);
+          console.log('✅ Web Speech API is available');
+        } else {
+          setIsAvailable(false);
+          console.log('❌ Web Speech API requires HTTPS (except localhost)');
+        }
       } else {
         setIsAvailable(false);
-        console.log(' Web Speech API not supported in this browser');
+        console.log('❌ Web Speech API not supported in this browser');
       }
     } else {
       // For mobile, we'll try to load the Voice module

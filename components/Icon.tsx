@@ -1,8 +1,9 @@
 import React from 'react';
-import { Text, StyleSheet, TextStyle } from 'react-native';
+import { MaterialIcons } from '@expo/vector-icons';
+import { TextStyle } from 'react-native';
 
 interface IconProps {
-  name: string;
+  name: keyof typeof MaterialIcons.glyphMap;
   size?: number;
   color?: string;
   style?: TextStyle;
@@ -15,14 +16,11 @@ export const Icon: React.FC<IconProps> = ({
   style,
 }) => {
   return (
-    <Text style={[styles.icon, { fontSize: size, color }, style]}>
-      {name}
-    </Text>
+    <MaterialIcons 
+      name={name} 
+      size={size} 
+      color={color} 
+      style={style}
+    />
   );
-};
-
-const styles = StyleSheet.create({
-  icon: {
-    textAlign: 'center',
-  },
-}); 
+}; 

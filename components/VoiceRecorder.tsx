@@ -13,6 +13,7 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useTheme } from '../theme/ThemeContext';
 import { useLanguage } from '../i18n/LanguageContext';
 import * as FileSystem from 'expo-file-system';
+import { convertWebmToWavFile, isAudioConversionAvailable } from '../utils/audioConverter';
 
 interface VoiceRecorderProps {
   onRecordingComplete: (audioFile: File | Blob | string, duration: number) => void;
@@ -34,7 +35,7 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
   
   const animationRef = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
-  const durationInterval = useRef<NodeJS.Timeout | null>(null);
+  const durationInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const recordingRef = useRef<any>(null);
 
   useEffect(() => {
@@ -133,7 +134,7 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
             outputFormat: Audio.RECORDING_OPTION_ANDROID_OUTPUT_FORMAT_MPEG_4,
             audioEncoder: Audio.RECORDING_OPTION_ANDROID_AUDIO_ENCODER_AAC,
             sampleRate: 44100,
-            numberOfChannels: 2,
+            numberOfChannels: 1,
             bitRate: 128000,
           },
           ios: {
@@ -205,21 +206,31 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
       // Calculate duration (approximate)
       const duration = Math.round(recordingDuration);
       
-      // For web, audioUri is already a Blob
-      // For mobile, we need to convert URI to File/Blob
+      // For web, convert webm to wav using ffmpeg
+      // For mobile, we'll pass the URI directly since the backend can handle it
       let audioFile: File | Blob | string = audioUri;
       
-      if (Platform.OS !== 'web' && typeof audioUri === 'string') {
-        // For mobile, convert URI to File-like object
-        try {
-          const response = await fetch(audioUri);
-          const blob = await response.blob();
-          audioFile = blob;
-        } catch (error) {
-          console.error('❌ Failed to convert mobile audio to blob:', error);
-          // Fallback to original URI for backward compatibility
-          audioFile = audioUri;
+      if (Platform.OS === 'web' && audioUri !== null) {
+        const audioUriObj = audioUri as Blob | string;
+        const isBlob = typeof audioUriObj === 'object' && 'size' in audioUriObj && 'type' in audioUriObj;
+        if (isBlob) {
+          // Convert webm blob to wav file using ffmpeg
+          try {
+            console.log('🎵 Đang convert webm sang wav bằng ffmpeg...');
+            const wavFile = await convertWebmToWavFile(audioUriObj as Blob);
+            audioFile = wavFile;
+            console.log('✅ Convert thành công! Format: wav');
+          } catch (conversionError) {
+            console.error('❌ Lỗi khi convert audio:', conversionError);
+            // Fallback: sử dụng webm blob nếu conversion thất bại
+            console.warn('⚠️ Sử dụng webm blob gốc do lỗi conversion');
+            audioFile = audioUriObj;
+          }
         }
+      } else if (Platform.OS !== 'web' && typeof audioUri === 'string') {
+        // For mobile, we'll pass the URI directly since the backend can handle it
+        // The ChatScreen will handle the file reading and base64 conversion
+        audioFile = audioUri;
       }
       
       // Call the completion handler

@@ -8,6 +8,9 @@ config.resolver.platforms = ['ios', 'android', 'native', 'web'];
 // Ensure proper module resolution for TurboModules
 config.resolver.resolverMainFields = ['react-native', 'browser', 'main'];
 
+// Add support for TypeScript files
+config.resolver.sourceExts = [...config.resolver.sourceExts, 'ts', 'tsx'];
+
 // Add transformer configuration for better compatibility
 config.transformer.minifierConfig = {
   keep_fnames: true,

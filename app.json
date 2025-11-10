@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "ChatApp",
+    "name": "ChatApp (pnpm)",
     "slug": "chat-bot-ai",
     "version": "1.0.0",
     "sdkVersion": "54.0.0",
@@ -14,27 +14,6 @@
       "resizeMode": "contain",
       "backgroundColor": "#007AFF"
     },
-    "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.chatapp.mobile",
-      "infoPlist": {
-        "NSMicrophoneUsageDescription": "This app uses the microphone for speech-to-text functionality.",
-        "NSSpeechRecognitionUsageDescription": "This app uses speech recognition to convert your voice to text."
-      }
-    },
-    "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#007AFF"
-      },
-      "edgeToEdgeEnabled": true,
-      "package": "com.chatapp.mobile",
-      "permissions": [
-        "android.permission.INTERNET",
-        "android.permission.VIBRATE",
-        "android.permission.RECORD_AUDIO"
-      ]
-    },
     "web": {
       "favicon": "./assets/favicon.png"
     },
@@ -44,6 +23,21 @@
       }
     },
     "owner": "peterzeihan",
-    "plugins": []
+    "plugins": [
+      "expo-dev-client",
+      "expo-av",
+      "expo-document-picker",
+      "expo-file-system"
+    ],
+    "android": {
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.INTERNET"
+      ],
+      "package": "com.peterzeihan.chatbotai"
+    }
   }
 }

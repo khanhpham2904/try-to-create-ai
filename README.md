@@ -19,8 +19,8 @@ A modern React Native chat application with AI-powered conversations, speech-to-
 
 ### Required Software
 - **Node.js**: v16 or higher ([Download](https://nodejs.org/))
-- **npm**: Comes with Node.js
-- **Expo CLI**: `npm install -g @expo/cli`
+- **pnpm**: Fast, disk space efficient package manager
+- **Expo CLI**: `ppnpm install -g @expo/cli`
 - **Git**: For version control
 
 ### Development Environment
@@ -38,7 +38,7 @@ git clone <repository-url>
 cd ChatApp
 
 # Install dependencies
-npm install
+pnpm install
 ```
 
 ### 2. Environment Configuration
@@ -53,12 +53,12 @@ cp .env.example .env
 ### 3. Start Development Server
 ```bash
 # Start Expo development server
-npm start
+pnpm start
 
 # Or run specific platforms
-npm run android    # Android
-npm run ios        # iOS  
-npm run web        # Web browser
+pnpm run android    # Android
+pnpm run ios        # iOS  
+pnpm run web        # Web browser
 ```
 
 ## 🎤 Speech Recognition Setup
@@ -68,7 +68,7 @@ Speech recognition requires a standalone app build (doesn't work in Expo Go):
 
 ```bash
 # Install EAS CLI globally
-npm install -g @expo/eas-cli
+pnpm install -g @expo/eas-cli
 
 # Login to Expo account
 eas login
@@ -182,10 +182,10 @@ ChatApp/
 
 ```bash
 # Development
-npm start                 # Start Expo dev server
-npm run android          # Run on Android
-npm run ios              # Run on iOS
-npm run web              # Run on web
+pnpm start                 # Start Expo dev server
+pnpm run android          # Run on Android
+pnpm run ios              # Run on iOS
+pnpm run web              # Run on web
 
 # Building
 eas build --platform android --profile development
@@ -193,8 +193,8 @@ eas build --platform ios --profile development
 eas build --platform all --profile production
 
 # Testing
-npm test                 # Run tests (if configured)
-npm run lint             # Run linter (if configured)
+pnpm test                 # Run tests (if configured)
+pnpm run lint             # Run linter (if configured)
 ```
 
 ## 🐛 Troubleshooting
@@ -228,7 +228,7 @@ npx expo start --clear
 ```bash
 # Clean install
 rm -rf node_modules package-lock.json
-npm install
+pnpm install
 ```
 
 **Build Issues:**

@@ -30,6 +30,8 @@ import AgentSelector from '../components/AgentSelector';
 import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
+import { File } from 'expo-file-system';
+import { readAsStringAsync } from 'expo-file-system/legacy';
 import { SpeechToTextButton } from '../components/SpeechToTextButton';
 import { SpeechDiagnostic } from '../components/SpeechDiagnostic';
 import { ScrollView } from 'react-native';
@@ -1121,7 +1123,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
         return;
       }
 
-        content = await FileSystem.readAsStringAsync(file.uri, { 
+        content = await readAsStringAsync(file.uri, { 
           encoding: 'utf8' as any
         });
         fileName = file.name || 'conversation.txt';
@@ -1158,37 +1160,82 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
         // Use multipart upload for File/Blob, fallback to base64 for string URIs
         if (audioFile instanceof File || audioFile instanceof Blob) {
           // Use multipart upload
-          console.log('🎤 Using multipart upload for audio file');
+          // Xác định format dựa trên file name hoặc mime type
+          let audioFormat = 'wav'; // Mặc định là wav sau khi convert
+          
+          if (audioFile instanceof File) {
+            // Lấy extension từ file name
+            const extension = audioFile.name.split('.').pop()?.toLowerCase();
+            if (extension === 'wav' || extension === 'm4a' || extension === 'mp4') {
+              audioFormat = extension;
+            } else if (extension === 'webm') {
+              audioFormat = 'webm'; // Fallback nếu vẫn là webm
+            }
+          } else if (audioFile instanceof Blob) {
+            // Kiểm tra mime type của blob
+            if (audioFile.type === 'audio/wav' || audioFile.type === 'audio/wave') {
+              audioFormat = 'wav';
+            } else if (audioFile.type === 'audio/mp4' || audioFile.type === 'audio/m4a') {
+              audioFormat = 'm4a';
+            } else if (audioFile.type === 'audio/webm') {
+              audioFormat = 'webm';
+            }
+          }
+          
+          console.log('🎤 Using multipart upload for audio file, format:', audioFormat);
           response = await apiService.uploadVoiceMessage(
             Number(user.id),
             audioFile,
-            audioFile instanceof File ? audioFile.name.split('.').pop() || 'wav' : 'webm',
+            audioFormat,
             selectedAgent?.id,
             selectedChatbox?.id,
             duration
           );
         } else {
-          // Fallback to base64 for backward compatibility
-          console.log('🎤 Using base64 upload for audio URI');
+          // For mobile URI strings, use base64 upload (multipart not supported in RN)
+          console.log('🎤 Using base64 upload for mobile URI');
           let audioData: string;
           let audioFormat: string = 'wav';
           
           if (Platform.OS === 'web') {
-            // For web, audioFile is a blob URL string
-            const response = await fetch(audioFile);
-            const arrayBuffer = await response.arrayBuffer();
-            const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
-            audioData = base64;
-            audioFormat = 'webm';
+            // For web, audioFile should be a File object (đã được convert từ webm sang wav)
+            // Nếu vẫn là string (blob URL), fetch và convert
+            try {
+              if (typeof audioFile === 'string') {
+                // Fallback: nếu vẫn là blob URL string
+                const response = await fetch(audioFile);
+                const arrayBuffer = await response.arrayBuffer();
+                const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+                audioData = base64;
+                audioFormat = 'webm'; // Fallback format
+              } else {
+                // Nếu là File object, đọc và convert sang base64
+                const arrayBuffer = await audioFile.arrayBuffer();
+                const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+                audioData = base64;
+                // Xác định format từ file name hoặc mime type
+                if (audioFile.name.endsWith('.wav')) {
+                  audioFormat = 'wav';
+                } else if (audioFile.name.endsWith('.m4a')) {
+                  audioFormat = 'm4a';
+                } else {
+                  audioFormat = 'wav'; // Mặc định sau khi convert
+                }
+              }
+            } catch (error) {
+              console.error('❌ Failed to process web audio file:', error);
+              throw new Error('Failed to process web audio file');
+            }
           } else {
             // For mobile, read file and convert to base64
-            const fileInfo = await FileSystem.getInfoAsync(audioFile);
+            const file = new File(audioFile);
+            const fileInfo = await file.info();
             if (fileInfo.exists) {
-              const base64 = await FileSystem.readAsStringAsync(audioFile, {
+              const base64 = await readAsStringAsync(audioFile, {
                 encoding: 'base64' as any,
               });
               audioData = base64;
-              audioFormat = 'm4a';
+              audioFormat = 'm4a'; // Android now records in M4A format
             } else {
               throw new Error('Audio file not found');
             }
@@ -1727,7 +1774,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
       setIsSending(true);
       
       // Convert image to base64 for sending
-      const base64 = await FileSystem.readAsStringAsync(imageUri, {
+      const base64 = await readAsStringAsync(imageUri, {
         encoding: 'base64' as any,
       });
       
@@ -1779,7 +1826,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
       setIsSending(true);
       
       // Read document content as text
-      const content = await FileSystem.readAsStringAsync(documentUri, {
+      const content = await readAsStringAsync(documentUri, {
         encoding: 'utf8' as any,
       });
       

@@ -5,26 +5,34 @@
 
 import { NativeModules } from 'react-native';
 
+// Safe native module checking with proper error handling
+const safeCheckNativeModule = (moduleName, callback) => {
+  try {
+    const module = NativeModules[moduleName];
+    if (module && callback) {
+      callback(module);
+    }
+    return !!module;
+  } catch (error) {
+    if (__DEV__) {
+      console.warn(`Error accessing ${moduleName}:`, error);
+    }
+    return false;
+  }
+};
+
 // Ensure PlatformConstants is available
 if (__DEV__) {
   console.log('Initializing native modules...');
   
   // Check if PlatformConstants is available
-  try {
-    const PlatformConstants = NativeModules.PlatformConstants;
-    if (PlatformConstants) {
-      console.log('PlatformConstants loaded successfully');
-    } else {
-      console.warn('PlatformConstants not found, this may cause issues');
-    }
-  } catch (error) {
-    console.warn('Error accessing PlatformConstants:', error);
-  }
+  safeCheckNativeModule('PlatformConstants', (PlatformConstants) => {
+    console.log('PlatformConstants loaded successfully');
+  });
   
   // Try to initialize native modules using our custom module
-  try {
-    const NativeModuleInitializer = NativeModules.NativeModuleInitializer;
-    if (NativeModuleInitializer) {
+  safeCheckNativeModule('NativeModuleInitializer', (NativeModuleInitializer) => {
+    if (NativeModuleInitializer.initializeNativeModules) {
       NativeModuleInitializer.initializeNativeModules()
         .then((result) => {
           console.log('Native modules initialization result:', result);
@@ -33,18 +41,16 @@ if (__DEV__) {
           console.warn('Native modules initialization failed:', error);
         });
     }
-  } catch (error) {
-    console.warn('Error accessing NativeModuleInitializer:', error);
-  }
+  });
 }
 
 // Export a function to check native module availability
 export const checkNativeModules = () => {
   const modules = {
-    PlatformConstants: !!NativeModules.PlatformConstants,
-    StatusBarManager: !!NativeModules.StatusBarManager,
-    DevSettings: !!NativeModules.DevSettings,
-    NativeModuleInitializer: !!NativeModules.NativeModuleInitializer,
+    PlatformConstants: safeCheckNativeModule('PlatformConstants'),
+    StatusBarManager: safeCheckNativeModule('StatusBarManager'),
+    DevSettings: safeCheckNativeModule('DevSettings'),
+    NativeModuleInitializer: safeCheckNativeModule('NativeModuleInitializer'),
   };
   
   if (__DEV__) {

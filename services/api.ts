@@ -541,9 +541,10 @@ class ApiService {
     agentId?: number,
     chatboxId?: number,
     audioUri?: string,
-    duration?: number
+    duration?: number,
+    useFemaleVoice: boolean = true
   ): Promise<ApiResponse<ChatMessageWithAgent & { audio_id?: number; audio_data?: string; duration?: number; audio_format?: string }>> {
-    console.log('🎤 Sending voice message for user:', userId);
+    console.log('🎤 Sending voice message for user:', userId, 'useFemaleVoice:', useFemaleVoice);
     
     return this.makeRequest<ChatMessageWithAgent>('/api/v1/voice/process', {
       method: 'POST',
@@ -554,7 +555,8 @@ class ApiService {
         agent_id: agentId,
         chatbox_id: chatboxId,
         audio_uri: audioUri,
-        duration: duration
+        duration: duration,
+        use_female_voice: useFemaleVoice
       }),
     });
   }
@@ -565,9 +567,10 @@ class ApiService {
     audioFormat: string = 'wav',
     agentId?: number,
     chatboxId?: number,
-    duration?: number
+    duration?: number,
+    useFemaleVoice: boolean = true
   ): Promise<ApiResponse<ChatMessageWithAgent & { audio_id?: number; audio_data?: string; duration?: number; audio_format?: string }>> {
-    console.log('🎤 Uploading voice message file for user:', userId);
+    console.log('🎤 Uploading voice message file for user:', userId, 'useFemaleVoice:', useFemaleVoice);
     
     // Create FormData for multipart upload
     const formData = new FormData();
@@ -576,6 +579,7 @@ class ApiService {
     if (agentId) formData.append('agent_id', agentId.toString());
     if (chatboxId) formData.append('chatbox_id', chatboxId.toString());
     if (duration) formData.append('duration', duration.toString());
+    formData.append('use_female_voice', useFemaleVoice.toString());
     
     // Use extended timeout for file uploads (2 minutes)
     const fileUploadTimeout = 120000; // 2 minutes

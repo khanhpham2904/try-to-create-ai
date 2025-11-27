@@ -131,15 +131,39 @@ export const VoiceMessage: React.FC<VoiceMessageProps> = ({
       if (Platform.OS === 'web') {
         // Use HTML5 Audio API for web
         console.log('🎵 Using HTML5 Audio API for web');
+        console.log('🎵 Audio format from URI:', audioUri.substring(0, 30));
+        
         const audio = new (window as any).Audio(audioUri);
         
         audio.addEventListener('loadeddata', () => {
-          console.log('🎵 HTML5 Audio loaded successfully');
+          console.log('✅ HTML5 Audio loaded successfully');
+          console.log('🎵 Audio duration:', audio.duration, 'seconds');
+          console.log('🎵 Audio readyState:', audio.readyState);
           setIsAudioLoaded(true);
         });
         
-        audio.addEventListener('error', (e) => {
+        audio.addEventListener('canplay', () => {
+          console.log('✅ HTML5 Audio can play');
+        });
+        
+        audio.addEventListener('canplaythrough', () => {
+          console.log('✅ HTML5 Audio can play through');
+        });
+        
+        audio.addEventListener('error', (e: any) => {
           console.error('❌ HTML5 Audio error:', e);
+          console.error('❌ Audio error code:', audio.error?.code);
+          console.error('❌ Audio error message:', audio.error?.message);
+          console.error('❌ Audio networkState:', audio.networkState);
+          console.error('❌ Audio readyState:', audio.readyState);
+        });
+        
+        audio.addEventListener('loadstart', () => {
+          console.log('🎵 HTML5 Audio load started');
+        });
+        
+        audio.addEventListener('progress', () => {
+          console.log('🎵 HTML5 Audio loading progress');
         });
         
         audio.addEventListener('timeupdate', () => {
@@ -147,11 +171,24 @@ export const VoiceMessage: React.FC<VoiceMessageProps> = ({
         });
         
         audio.addEventListener('ended', () => {
+          console.log('✅ HTML5 Audio playback ended');
           setIsPlaying(false);
           setCurrentPosition(0);
         });
         
+        // Try to load audio explicitly
+        audio.load();
         setHtmlAudio(audio);
+        
+        // Check if audio is ready after a short delay
+        setTimeout(() => {
+          console.log('🎵 Audio check after 500ms:', {
+            readyState: audio.readyState,
+            networkState: audio.networkState,
+            error: audio.error,
+            duration: audio.duration
+          });
+        }, 500);
         
       } else {
         // Use expo-av for mobile

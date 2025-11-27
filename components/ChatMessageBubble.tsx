@@ -43,6 +43,22 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
   const messageText = typeof message === 'string' ? message : (isUser ? message.message : message.response);
   const messageObj = typeof message === 'string' ? null : message;
   const { theme } = useTheme();
+  
+  // Debug: Log message object structure
+  if (messageObj && !isUser) {
+    console.log('🔍 ChatMessageBubble - AI message object:', {
+      id: messageObj.id,
+      hasAudioResponseId: !!messageObj.audio_response_id,
+      audioResponseId: messageObj.audio_response_id,
+      hasAudioResponseData: !!messageObj.audio_response_data,
+      audioResponseDataType: typeof messageObj.audio_response_data,
+      audioResponseDataLength: messageObj.audio_response_data?.length,
+      audioResponseFormat: messageObj.audio_response_format,
+      audioResponseDuration: messageObj.audio_response_duration,
+      hasResponse: !!messageObj.response,
+      responseLength: messageObj.response?.length
+    });
+  }
   const slideAnim = useRef(new Animated.Value(isUser ? 50 : -50)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.8)).current;
@@ -218,20 +234,33 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
     audioDataLength: messageObj?.audio_data?.length,
     audioResponseId: messageObj?.audio_response_id,
     audioResponseDataLength: messageObj?.audio_response_data?.length,
+    audioResponseDataType: typeof messageObj?.audio_response_data,
     isUser
   });
 
   // Check if message has audio_response_id (AI audio response) - PRIORITY
-  if (messageObj && messageObj.audio_response_id && messageObj.audio_response_data && !isUser) {
+  // Check both audio_response_id and audio_response_data (must be non-empty string)
+  const hasAudioResponse = messageObj && 
+    messageObj.audio_response_id && 
+    messageObj.audio_response_data && 
+    typeof messageObj.audio_response_data === 'string' &&
+    messageObj.audio_response_data.trim().length > 0 &&
+    !isUser;
+  
+  if (hasAudioResponse) {
     console.log('🎵 AI Audio response detected (database format):', {
       audio_response_id: messageObj.audio_response_id,
       duration: messageObj.audio_response_duration,
       audio_format: messageObj.audio_response_format,
+      audio_response_data_length: messageObj.audio_response_data.length,
       isUser
     });
     
     // Convert base64 audio response data to data URI
-    const audioUri = `data:audio/${messageObj.audio_response_format || 'wav'};base64,${messageObj.audio_response_data}`;
+    // Backend always generates WAV format for audio_response, so use 'wav' explicitly
+    const audioFormat = messageObj.audio_response_format?.toLowerCase() === 'wav' ? 'wav' : 'wav';
+    const audioUri = `data:audio/${audioFormat};base64,${messageObj.audio_response_data}`;
+    console.log('🎵 Created audio URI with format:', audioFormat, 'from audio_response_format:', messageObj.audio_response_format);
     
     return (
       <VoiceMessage
@@ -243,6 +272,14 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
         transcribedText={messageObj.response} // Use response as transcribed text
       />
     );
+  } else if (messageObj && messageObj.audio_response_id && !isUser) {
+    // Log when audio_response_id exists but audio_response_data is missing
+    console.warn('⚠️ audio_response_id exists but audio_response_data is missing or empty:', {
+      audio_response_id: messageObj.audio_response_id,
+      audio_response_data: messageObj.audio_response_data,
+      audio_response_data_type: typeof messageObj.audio_response_data,
+      audio_response_data_length: messageObj.audio_response_data?.length
+    });
   }
 
   // Check if message has audio_id (user voice message) - SECONDARY

@@ -46,6 +46,7 @@ import { WebVoiceDiagnostic } from '../components/WebVoiceDiagnostic';
 import { VoiceRecorder } from '../components/VoiceRecorder';
 import { InlineVoiceRecorder } from '../components/InlineVoiceRecorder';
 import { VoiceMessage } from '../components/VoiceMessage';
+import { VoiceGenderSelector } from '../components/VoiceGenderSelector';
 
 interface ChatScreenProps {
   navigation: any;
@@ -111,8 +112,9 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
   const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
   const [showInlineVoiceRecorder, setShowInlineVoiceRecorder] = useState(false);
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [useFemaleVoice, setUseFemaleVoice] = useState(true); // Default to female voice
   
-  // Note: TTS is now handled by backend gTTS - no frontend TTS needed
+  // Note: TTS is now handled by backend Azure Speech - no frontend TTS needed
   
   // Speech-to-text hook
   const { 
@@ -425,25 +427,54 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
         if (response.data && response.data.messages) {
           console.log('📜 Found', response.data.messages.length, 'messages');
           
+          // Debug: Check first message structure from API
+          if (response.data.messages.length > 0) {
+            const firstMsg = response.data.messages[0];
+            console.log('🔍 First message from API (with agent):', {
+              id: firstMsg.id,
+              hasAudioResponseId: !!firstMsg.audio_response_id,
+              audioResponseId: firstMsg.audio_response_id,
+              hasAudioResponseData: !!firstMsg.audio_response_data,
+              audioResponseDataType: typeof firstMsg.audio_response_data,
+              audioResponseDataLength: firstMsg.audio_response_data?.length,
+              audioResponseFormat: firstMsg.audio_response_format,
+              audioResponseDuration: firstMsg.audio_response_duration,
+              allKeys: Object.keys(firstMsg)
+            });
+          }
           
           // Process messages to ensure proper format
-          let processedMessages = response.data.messages.map((msg: any) => ({
-            id: msg.id,
-            message: msg.message || '',
-            response: msg.response || '',
-            user_id: msg.user_id,
-            agent_id: msg.agent_id,
-            chatbox_id: msg.chatbox_id,
-            audio_id: msg.audio_id,
-            audio_data: msg.audio_data,
-            duration: msg.duration,
-            audio_format: msg.audio_format,
-            audio_response_id: msg.audio_response_id,
-            audio_response_data: msg.audio_response_data,
-            audio_response_duration: msg.audio_response_duration,
-            audio_response_format: msg.audio_response_format,
-            created_at: msg.created_at,
-          }));
+          let processedMessages = response.data.messages.map((msg: any) => {
+            const processed = {
+              id: msg.id,
+              message: msg.message || '',
+              response: msg.response || '',
+              user_id: msg.user_id,
+              agent_id: msg.agent_id,
+              chatbox_id: msg.chatbox_id,
+              audio_id: msg.audio_id,
+              audio_data: msg.audio_data,
+              duration: msg.duration,
+              audio_format: msg.audio_format,
+              audio_response_id: msg.audio_response_id,
+              audio_response_data: msg.audio_response_data,
+              audio_response_duration: msg.audio_response_duration,
+              audio_response_format: msg.audio_response_format,
+              created_at: msg.created_at,
+            };
+            
+            // Debug: Log if audio_response fields are missing
+            if (msg.audio_response_id && !msg.audio_response_data) {
+              console.warn('⚠️ Message has audio_response_id but no audio_response_data:', {
+                messageId: msg.id,
+                audioResponseId: msg.audio_response_id,
+                audioResponseData: msg.audio_response_data,
+                allMsgKeys: Object.keys(msg)
+              });
+            }
+            
+            return processed;
+          });
           
           // Remove duplicate messages by ID
           const uniqueMessages = processedMessages.filter((msg, index, self) => 
@@ -520,7 +551,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
         if (route?.params?.generalChat && route?.params?.newChatTimestamp && lastNewChatTimestamp === route.params.newChatTimestamp) {
           console.log('📜 Fresh general chat requested - starting with empty messages');
           setMessages([]);
-        } else if (route?.params?.existingGeneralChat && route?.params?.existingChatTimestamp && lastExistingChatTimestamp === route.params.existingChatTimestamp) {
+          } else if (route?.params?.existingGeneralChat && route?.params?.existingChatTimestamp && lastExistingChatTimestamp === route.params.existingChatTimestamp) {
           console.log('📜 Existing general chat requested - loading existing messages');
           // Load existing general messages
           await new Promise(resolve => setTimeout(resolve, 300));
@@ -536,20 +567,55 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
             
             console.log('📜 Found', generalMessages.length, 'general messages');
             
-            // Process messages to ensure proper format
-            let processedMessages = generalMessages.map((msg: any) => ({
-              id: msg.id,
-              message: msg.message || '',
-              response: msg.response || '',
-              user_id: msg.user_id,
-              agent_id: msg.agent_id,
-              chatbox_id: msg.chatbox_id,
-              audio_id: msg.audio_id,
-              audio_data: msg.audio_data,
-              duration: msg.duration,
-              audio_format: msg.audio_format,
-              created_at: msg.created_at,
-            }));
+            // Debug: Check first message structure from API
+            if (generalMessages.length > 0) {
+              const firstMsg = generalMessages[0];
+              console.log('🔍 First general message from API:', {
+                id: firstMsg.id,
+                hasAudioResponseId: !!firstMsg.audio_response_id,
+                audioResponseId: firstMsg.audio_response_id,
+                hasAudioResponseData: !!firstMsg.audio_response_data,
+                audioResponseDataType: typeof firstMsg.audio_response_data,
+                audioResponseDataLength: firstMsg.audio_response_data?.length,
+                audioResponseFormat: firstMsg.audio_response_format,
+                audioResponseDuration: firstMsg.audio_response_duration,
+                allKeys: Object.keys(firstMsg)
+              });
+            }
+            
+            // Process messages to ensure proper format - INCLUDING audio_response fields
+            let processedMessages = generalMessages.map((msg: any) => {
+              const processed = {
+                id: msg.id,
+                message: msg.message || '',
+                response: msg.response || '',
+                user_id: msg.user_id,
+                agent_id: msg.agent_id,
+                chatbox_id: msg.chatbox_id,
+                audio_id: msg.audio_id,
+                audio_data: msg.audio_data,
+                duration: msg.duration,
+                audio_format: msg.audio_format,
+                // ADD audio_response fields - these were missing!
+                audio_response_id: msg.audio_response_id,
+                audio_response_data: msg.audio_response_data,
+                audio_response_duration: msg.audio_response_duration,
+                audio_response_format: msg.audio_response_format,
+                created_at: msg.created_at,
+              };
+              
+              // Debug: Log if audio_response fields are missing
+              if (msg.audio_response_id && !msg.audio_response_data) {
+                console.warn('⚠️ General message has audio_response_id but no audio_response_data:', {
+                  messageId: msg.id,
+                  audioResponseId: msg.audio_response_id,
+                  audioResponseData: msg.audio_response_data,
+                  allMsgKeys: Object.keys(msg)
+                });
+              }
+              
+              return processed;
+            });
             
             // Remove duplicate messages by ID
             const uniqueMessages = processedMessages.filter((msg, index, self) => 
@@ -1189,7 +1255,8 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
             audioFormat,
             selectedAgent?.id,
             selectedChatbox?.id,
-            duration
+            duration,
+            useFemaleVoice
           );
         } else {
           // For mobile URI strings, use base64 upload (multipart not supported in RN)
@@ -1248,7 +1315,8 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
             selectedAgent?.id,
             selectedChatbox?.id,
             audioFile,
-            duration
+            duration,
+            useFemaleVoice
           );
         }
 
@@ -2239,15 +2307,28 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
             <View style={styles.aiAvatar}>
               <Icon name="smart-toy" size={20} color={theme.colors.primary} />
             </View>
-            <ChatMessageBubble
-              message={message}
-              response={message.response}
-              isUser={false}
-              timestamp={message.created_at}
-              agentId={selectedAgent?.id}
-              animated={!attachmentOptionsVisible}
-              isLegacyVoiceMessage={false}
-            />
+            {(() => {
+              console.log('🎨 Rendering AI response with ChatMessageBubble:', {
+                messageId: message.id,
+                hasAudioResponseId: !!message.audio_response_id,
+                hasAudioResponseData: !!message.audio_response_data,
+                audioResponseId: message.audio_response_id,
+                audioResponseDataLength: message.audio_response_data?.length,
+                audioResponseFormat: message.audio_response_format,
+                response: message.response
+              });
+              return (
+                <ChatMessageBubble
+                  message={message}
+                  response={message.response}
+                  isUser={false}
+                  timestamp={message.created_at}
+                  agentId={selectedAgent?.id}
+                  animated={!attachmentOptionsVisible}
+                  isLegacyVoiceMessage={false}
+                />
+              );
+            })()}
             <TouchableOpacity
               style={styles.deleteButton}
               onPress={() => deleteMessage(message.id)}
@@ -2308,6 +2389,15 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
     // If only AI response (no user content)
     if (!hasUserContent && hasAIResponse) {
       console.log('🎨 Rendering AI response only (left side)');
+      console.log('🎨 AI response message data:', {
+        messageId: message.id,
+        hasAudioResponseId: !!message.audio_response_id,
+        hasAudioResponseData: !!message.audio_response_data,
+        audioResponseId: message.audio_response_id,
+        audioResponseDataLength: message.audio_response_data?.length,
+        audioResponseFormat: message.audio_response_format,
+        response: message.response
+      });
       return (
         <View key={message.id} style={[styles.messageRow, styles.aiMessageRow]}>
           <View style={styles.aiAvatar}>
@@ -2973,6 +3063,13 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
             enabled={!attachmentOptionsVisible && !showInlineVoiceRecorder}
             keyboardVerticalOffset={0}
           >
+            {/* Voice Gender Selector */}
+            <VoiceGenderSelector
+              useFemaleVoice={useFemaleVoice}
+              onGenderChange={setUseFemaleVoice}
+              style={{ paddingHorizontal: 16, paddingTop: 8 }}
+            />
+            
             <ChatInput
                 value={inputMessage}
                 onChangeText={setInputMessage}

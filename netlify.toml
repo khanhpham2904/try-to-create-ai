@@ -1,9 +1,9 @@
 [build]
-  # Build command for Expo web
-  command = "npx expo export:web"
+  # Build command for Expo web with Metro bundler
+  command = "npx expo export --platform web"
   
-  # Output directory for Expo web build
-  publish = "web-build"
+  # Output directory for Expo web build (Metro uses 'dist' directory)
+  publish = "dist"
 
 [build.environment]
   # Node version - Netlify will use .nvmrc file automatically

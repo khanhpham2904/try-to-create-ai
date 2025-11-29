@@ -26,11 +26,13 @@ export const loadFFmpeg = async (): Promise<void> => {
   }
 
   try {
-    // Dynamic import để chỉ load khi cần
-    const { FFmpeg } = await import('@ffmpeg/ffmpeg');
+    // Dynamic import với webpackIgnore để ngăn bundler phân tích worker.js
+    // This ensures FFmpeg worker is only loaded at runtime, not during build
+    const moduleId = '@ffmpeg/ffmpeg';
+    const { FFmpeg } = await import(/* webpackIgnore: true */ moduleId);
     const { fetchFile, toBlobURL } = await import('@ffmpeg/util');
     
-    // Tạo instance ffmpeg mới
+    // Create FFmpeg instance
     ffmpeg = new FFmpeg();
     
     // Set log level
@@ -38,7 +40,7 @@ export const loadFFmpeg = async (): Promise<void> => {
       console.log('🎵 FFmpeg:', message);
     });
 
-    // Load ffmpeg core từ CDN
+    // Load ffmpeg core từ CDN (avoid bundling)
     const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
     await ffmpeg.load({
       coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),

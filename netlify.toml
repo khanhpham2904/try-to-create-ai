@@ -1,0 +1,36 @@
+[build]
+  # Build command for Expo web
+  command = "npx expo export:web"
+  
+  # Output directory for Expo web build
+  publish = "web-build"
+
+[build.environment]
+  # Node version
+  NODE_VERSION = "18.x"
+  
+  # Build environment
+  NODE_ENV = "production"
+  
+  # Expo configuration
+  EXPO_PUBLIC_ENV = "production"
+
+# Redirect rules for SPA
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Headers for all files (required for FFmpeg SharedArrayBuffer)
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "require-corp"
+
+# Headers for WASM files (required for FFmpeg)
+[[headers]]
+  for = "/*.wasm"
+  [headers.values]
+    Content-Type = "application/wasm"
+

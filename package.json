@@ -36,7 +36,7 @@
     "react-native-web": "^0.21.0",
     "react-native-worklets": "0.5.1",
     "socket.io-client": "^4.8.1",
-    "@ffmpeg/ffmpeg": "^0.12.10",
+    "@ffmpeg/ffmpeg": "^0.12.6",
     "@ffmpeg/util": "^0.12.1"
   },
   "devDependencies": {

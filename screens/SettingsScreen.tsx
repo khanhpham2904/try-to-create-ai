@@ -107,11 +107,11 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
   };
 
   const handlePrivacyPolicy = () => {
-    Linking.openURL('https://example.com/privacy');
+    navigation.navigate('PrivacyPolicy');
   };
 
   const handleTermsOfService = () => {
-    Linking.openURL('https://example.com/terms');
+    navigation.navigate('TermsOfService');
   };
 
   const handleResetSettings = () => {

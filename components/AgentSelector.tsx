@@ -19,6 +19,7 @@ import { useAgent } from './AgentContext';
 import { Agent, apiService, ChatMessageWithAgent } from '../services/api';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import AgentCustomizer from './AgentCustomizer';
+import NewbieGuideModal from './NewbieGuideModal';
 
 interface AgentSelectorProps {
   selectedAgent: Agent | null;
@@ -93,6 +94,7 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
   const [refreshing, setRefreshing] = useState(false);
   const [showCustomizer, setShowCustomizer] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
+  const [showNewbieGuide, setShowNewbieGuide] = useState(false);
 
   useEffect(() => {
     if (visible) {
@@ -834,13 +836,22 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
                 </Text>
               </View>
             </View>
-            <TouchableOpacity 
-              style={styles.closeButton} 
-              onPress={onClose}
-              activeOpacity={0.6}
-            >
-              <Icon name="close" size={20} color={theme.colors.textTertiary} />
-            </TouchableOpacity>
+            <View style={styles.headerActions}>
+              <TouchableOpacity 
+                style={styles.headerActionBtn} 
+                onPress={() => setShowNewbieGuide(true)}
+                activeOpacity={0.7}
+              >
+                <Icon name="help-outline" size={20} color={theme.colors.primary} />
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.closeButton} 
+                onPress={onClose}
+                activeOpacity={0.6}
+              >
+                <Icon name="close" size={20} color={theme.colors.textTertiary} />
+              </TouchableOpacity>
+            </View>
           </View>
 
           <FlatList
@@ -901,6 +912,12 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
         onAgentUpdated={handleAgentUpdated}
         editingAgent={editingAgent}
         userId={userId}
+      />
+
+      {/* Newbie Guide Modal */}
+      <NewbieGuideModal
+        visible={showNewbieGuide}
+        onClose={() => setShowNewbieGuide(false)}
       />
     </Modal>
   );

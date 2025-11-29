@@ -630,13 +630,27 @@ class ApiService {
     userId: number, 
     skip: number = 0, 
     limit: number = 50,
-    agentId?: number
+    agentId?: number | null,
+    withoutAgent?: boolean
   ): Promise<ApiResponse<ChatHistoryResponse>> {
-    console.log('📜 Getting messages for user:', userId, agentId ? `with agent: ${agentId}` : '');
-    const agentParam = agentId ? `&agent_id=${agentId}` : '';
-    return this.makeRequest<ChatHistoryResponse>(
-      `/api/v1/chat/messages?user_id=${userId}&skip=${skip}&limit=${limit}${agentParam}`
-    );
+    // If withoutAgent is true OR agentId is explicitly null, use without_agent=true
+    if (withoutAgent || agentId === null) {
+      console.log('📜 Getting messages for user:', userId, 'without agent');
+      return this.makeRequest<ChatHistoryResponse>(
+        `/api/v1/chat/messages?user_id=${userId}&skip=${skip}&limit=${limit}&without_agent=true`
+      );
+    } else if (agentId !== undefined && agentId !== null) {
+      console.log('📜 Getting messages for user:', userId, `with agent: ${agentId}`);
+      return this.makeRequest<ChatHistoryResponse>(
+        `/api/v1/chat/messages?user_id=${userId}&skip=${skip}&limit=${limit}&agent_id=${agentId}`
+      );
+    } else {
+      // No agentId parameter - get all messages
+      console.log('📜 Getting all messages for user:', userId);
+      return this.makeRequest<ChatHistoryResponse>(
+        `/api/v1/chat/messages?user_id=${userId}&skip=${skip}&limit=${limit}`
+      );
+    }
   }
 
   async deleteMessage(messageId: number, userId: number): Promise<ApiResponse<void>> {

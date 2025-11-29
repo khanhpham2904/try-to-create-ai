@@ -29,7 +29,7 @@ interface ChatInputProps {
   isRecording?: boolean;
 }
 
-export const ChatInput: React.FC<ChatInputProps> = ({
+const ChatInputComponent: React.FC<ChatInputProps> = ({
   value,
   onChangeText,
   onSend,
@@ -244,6 +244,22 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     </Animated.View>
   );
 };
+
+// Wrap with React.memo for performance optimization
+export const ChatInput = React.memo(ChatInputComponent, (prevProps, nextProps) => {
+  // Custom comparison function for React.memo
+  // Only re-render if these props change
+  return (
+    prevProps.value === nextProps.value &&
+    prevProps.disabled === nextProps.disabled &&
+    prevProps.isListening === nextProps.isListening &&
+    prevProps.isRecording === nextProps.isRecording &&
+    prevProps.placeholder === nextProps.placeholder
+  );
+});
+
+// Add display name for debugging
+ChatInput.displayName = 'ChatInput';
 
 const styles = StyleSheet.create({
   inputContainer: {

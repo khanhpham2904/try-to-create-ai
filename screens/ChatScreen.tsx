@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -16,15 +16,16 @@ import {
   Modal,
   Image,
   Keyboard,
+  ScrollView,
+  Animated,
 } from 'react-native';
-import { Animated } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { useAuth } from '../components/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 import { useAgent } from '../components/AgentContext';
 import { useUserProfile } from '../components/UserProfileContext';
 import { apiService, ChatMessage, Agent, ChatMessageWithAgent, Chatbox, ChatboxWithMessages } from '../services/api';
-import Icon from 'react-native-vector-icons/MaterialIcons';
+import Icon from '@expo/vector-icons/MaterialIcons';
 import AgentCustomizer from '../components/AgentCustomizer';
 import AgentSelector from '../components/AgentSelector';
 import { useFocusEffect } from '@react-navigation/native';
@@ -34,7 +35,6 @@ import { File } from 'expo-file-system';
 import { readAsStringAsync } from 'expo-file-system/legacy';
 import { SpeechToTextButton } from '../components/SpeechToTextButton';
 import { SpeechDiagnostic } from '../components/SpeechDiagnostic';
-import { ScrollView } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { AnimatedStatusIndicator } from '../components/AnimatedStatusIndicator';
 import { FloatingActionButton } from '../components/FloatingActionButton';
@@ -47,6 +47,8 @@ import { VoiceRecorder } from '../components/VoiceRecorder';
 import { InlineVoiceRecorder } from '../components/InlineVoiceRecorder';
 import { VoiceMessage } from '../components/VoiceMessage';
 import { VoiceGenderSelector } from '../components/VoiceGenderSelector';
+import NewbieGuideModal from '../components/NewbieGuideModal';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface ChatScreenProps {
   navigation: any;
@@ -74,7 +76,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
   const [selectedChatbox, setSelectedChatbox] = useState<Chatbox | null>(null);
   const [isInChat, setIsInChat] = useState(false);
   const [isRefreshingConversations, setIsRefreshingConversations] = useState(false);
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<FlatList<ChatMessage> | ScrollView>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   // Add ref to track sending state to prevent race conditions
   const isSendingRef = useRef(false);
@@ -106,6 +108,10 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
   const [lastNewChatTimestamp, setLastNewChatTimestamp] = useState<number | null>(null);
   const [lastExistingChatTimestamp, setLastExistingChatTimestamp] = useState<number | null>(null);
   
+  // Newbie guide modal state
+  const [showNewbieGuide, setShowNewbieGuide] = useState(false);
+  const [hasCheckedGuideStatus, setHasCheckedGuideStatus] = useState(false);
+  
   // Voice chat mode state (removed - now using inline voice recording)
   const [showVoiceDemo, setShowVoiceDemo] = useState(false);
   const [showWebDiagnostic, setShowWebDiagnostic] = useState(false);
@@ -113,6 +119,10 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
   const [showInlineVoiceRecorder, setShowInlineVoiceRecorder] = useState(false);
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [useFemaleVoice, setUseFemaleVoice] = useState(true); // Default to female voice
+  
+  // Keyboard handling for Android
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const keyboardAnim = useRef(new Animated.Value(0)).current;
   
   // Note: TTS is now handled by backend Azure Speech - no frontend TTS needed
   
@@ -126,10 +136,49 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
     isAvailable: sttAvailable 
   } = useSpeechToText(language === 'vi' ? 'vi-VN' : 'en-US');
 
+  // Helper function to conditionally log (only in development)
+  // Must be defined before functions that use it, and at top level
+  const devLog = useCallback((...args: any[]) => {
+    if (__DEV__) {
+      console.log(...args);
+    }
+  }, []);
+
+  // Helper functions to handle scroll for both FlatList and ScrollView
+  // Must be defined before useEffect hooks that use them
+  const scrollToPosition = useCallback((y: number, animated: boolean = false) => {
+    if (!scrollRef.current) return;
+    
+    try {
+      if ('scrollTo' in scrollRef.current) {
+        // ScrollView
+        (scrollRef.current as ScrollView).scrollTo({ y, animated });
+      } else if ('scrollToOffset' in scrollRef.current) {
+        // FlatList
+        (scrollRef.current as FlatList<ChatMessage>).scrollToOffset({ offset: y, animated });
+      }
+    } catch (error) {
+      // Silently handle scroll errors (e.g., when list is not ready)
+      if (__DEV__) {
+        console.warn('Scroll to position failed:', error);
+      }
+    }
+  }, []);
+
+  // Limit messages to last 50 to prevent memory issues
+  const MAX_MESSAGES_DISPLAY = 50;
+  const displayedMessages = useMemo(() => {
+    // Only show last 50 messages for performance
+    // Add safety check to ensure messages is an array
+    if (!Array.isArray(messages)) {
+      return [];
+    }
+    return messages.slice(-MAX_MESSAGES_DISPLAY);
+  }, [messages]);
+
   // Handle recognized speech text
   useEffect(() => {
     if (recognizedText && recognizedText.trim()) {
-      console.log('🎤 Speech recognized:', recognizedText);
       setInputMessage(recognizedText.trim());
       // Auto-send recognized text
       setTimeout(() => {
@@ -137,6 +186,34 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
       }, 500); // Small delay to ensure message is set
     }
   }, [recognizedText]);
+
+  // Handle keyboard show/hide for Android
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      const keyboardWillShowListener = Keyboard.addListener('keyboardDidShow', (e) => {
+        const height = e.endCoordinates.height;
+        setKeyboardHeight(height);
+        Animated.timing(keyboardAnim, {
+          toValue: height,
+          duration: 250,
+          useNativeDriver: false, // padding doesn't support native driver
+        }).start();
+      });
+      const keyboardWillHideListener = Keyboard.addListener('keyboardDidHide', () => {
+        setKeyboardHeight(0);
+        Animated.timing(keyboardAnim, {
+          toValue: 0,
+          duration: 250,
+          useNativeDriver: false,
+        }).start();
+      });
+
+      return () => {
+        keyboardWillShowListener.remove();
+        keyboardWillHideListener.remove();
+      };
+    }
+  }, [keyboardAnim]);
 
   // Function to force message refresh
   const forceMessageRefresh = () => {
@@ -150,7 +227,11 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
 
   useEffect(() => {
     if (user) {
+      // Only load chat history if not in chat mode (to build conversation list)
+      // If in chat mode, loadMessages() will handle loading messages
+      if (!isInChat) {
       loadChatHistory();
+      }
       loadAllAgents();
       loadAllChatboxes();
       // Fade in animation
@@ -160,7 +241,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
         useNativeDriver: true,
       }).start();
     }
-  }, [user]);
+  }, [user, isInChat]);
 
   // Add focus effect to restore layout when returning from modals
   useEffect(() => {
@@ -178,7 +259,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
       const chatboxId = route.params.chatboxId;
       const chatbox = allChatboxes.find((c: any) => c.id === chatboxId);
       if (chatbox) {
-        console.log('🔄 Setting chatbox mode:', chatbox.title, 'ID:', chatbox.id);
+        devLog('🔄 Setting chatbox mode:', chatbox.title, 'ID:', chatbox.id);
         setSelectedChatbox(chatbox);
         setSelectedAgent(null);
         setIsInChat(true);
@@ -190,7 +271,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
       // New general chat mode - explicitly requested from HomeScreen with timestamp
       const currentTimestamp = route.params.newChatTimestamp;
       if (lastNewChatTimestamp !== currentTimestamp) {
-        console.log('🔄 Setting new general chat mode with timestamp:', currentTimestamp);
+        devLog('🔄 Setting new general chat mode with timestamp:', currentTimestamp);
         setSelectedChatbox(null);
         setSelectedAgent(null);
         setMessages([]); // Clear messages to start fresh
@@ -202,7 +283,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
       // Existing general chat mode - load existing general messages with timestamp
       const currentTimestamp = route.params.existingChatTimestamp;
       if (lastExistingChatTimestamp !== currentTimestamp) {
-        console.log('🔄 Setting existing general chat mode with timestamp:', currentTimestamp);
+        devLog('🔄 Setting existing general chat mode with timestamp:', currentTimestamp);
         setSelectedChatbox(null);
         setSelectedAgent(null);
         setIsInChat(true);
@@ -213,7 +294,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
     } else if (route?.params?.agent && user) {
       // Agent-specific chat mode
       const agent = route.params.agent;
-      console.log('🔄 Setting agent mode:', agent.name, 'ID:', agent.id);
+      devLog('🔄 Setting agent mode:', agent.name, 'ID:', agent.id);
       setSelectedAgent(agent);
       setSelectedChatbox(null);
       setIsInChat(true);
@@ -228,17 +309,66 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
   // Reset timestamps when route params change
   useEffect(() => {
     if (!route?.params?.generalChat && !route?.params?.existingGeneralChat && !route?.params?.chatboxId && !route?.params?.agent) {
-      console.log('🔄 Clearing timestamps - no relevant route params');
+      devLog('🔄 Clearing timestamps - no relevant route params');
       setLastNewChatTimestamp(null);
       setLastExistingChatTimestamp(null);
     }
   }, [route?.params?.generalChat, route?.params?.existingGeneralChat, route?.params?.chatboxId, route?.params?.agent]);
 
+  // Check if user has seen the newbie guide
+  useEffect(() => {
+    const checkGuideStatus = async () => {
+      if (!user || hasCheckedGuideStatus) return;
+      
+      try {
+        const guideKey = `newbie_guide_shown_${user.id}`;
+        const hasSeenGuide = await AsyncStorage.getItem(guideKey);
+        
+        // Show guide if user hasn't seen it and is in general chat mode
+        if (!hasSeenGuide && isInChat && !selectedAgent && !selectedChatbox) {
+          // Small delay to ensure UI is ready
+          setTimeout(() => {
+            setShowNewbieGuide(true);
+          }, 500);
+        }
+        
+        setHasCheckedGuideStatus(true);
+      } catch (error) {
+        console.error('Error checking guide status:', error);
+        setHasCheckedGuideStatus(true);
+      }
+    };
+
+    checkGuideStatus();
+  }, [user, isInChat, selectedAgent, selectedChatbox, hasCheckedGuideStatus]);
+
+  // Handle new general chat - show guide if needed
+  useEffect(() => {
+    const showGuideForNewGeneralChat = async () => {
+      if (!user || !route?.params?.generalChat) return;
+      
+      try {
+        const guideKey = `newbie_guide_shown_${user.id}`;
+        const hasSeenGuide = await AsyncStorage.getItem(guideKey);
+        
+        if (!hasSeenGuide) {
+          setTimeout(() => {
+            setShowNewbieGuide(true);
+          }, 800);
+        }
+      } catch (error) {
+        console.error('Error checking guide for new general chat:', error);
+      }
+    };
+
+    showGuideForNewGeneralChat();
+  }, [route?.params?.generalChat, user]);
+
   // Cleanup effect when component unmounts or when leaving chat mode
   useEffect(() => {
     return () => {
       // Cleanup when component unmounts
-      console.log('🧹 ChatScreen cleanup - clearing state');
+      devLog('🧹 ChatScreen cleanup - clearing state');
       setMessages([]);
       setSelectedAgent(null);
       setSelectedChatbox(null);
@@ -252,11 +382,11 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
   useFocusEffect(
     React.useCallback(() => {
       if (user) {
-        console.log('🔄 Screen focused, reloading data...');
+        devLog('🔄 Screen focused, reloading data...');
         
         // If we're not in chat mode, refresh conversation list with loading indicator
         if (!isInChat) {
-          console.log('🔄 Refreshing conversation list...');
+          devLog('🔄 Refreshing conversation list...');
           setIsRefreshingConversations(true);
           Promise.all([loadChatHistory(), loadAllAgents(), loadAllChatboxes()]).finally(() => {
             setIsRefreshingConversations(false);
@@ -281,7 +411,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
         );
         
         if (hasTypingMessages) {
-          console.log('🧹 Cleaning up stuck typing messages');
+          devLog('🧹 Cleaning up stuck typing messages');
           return prev.filter((msg: ChatMessage) => 
             !msg.response || !msg.response.includes(typingMessagePattern)
           );
@@ -301,58 +431,118 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
 
   // Monitor messages state changes for debugging
   useEffect(() => {
-    console.log('📱 Messages state updated:', messages.length, 'messages');
-    messages.forEach((msg, index) => {
-      console.log(`📱 Message ${index}:`, { id: msg.id, response: msg.response?.substring(0, 50) });
-    });
+    if (__DEV__ && Array.isArray(messages)) {
+    devLog('📱 Messages state updated:', messages.length, 'messages');
+    if (__DEV__) {
+      messages.forEach((msg, index) => {
+        devLog(`📱 Message ${index}:`, { id: msg.id, response: msg.response?.substring(0, 50) });
+      });
+    }
+    }
   }, [messages]);
 
   // Handle scroll position restoration when messages change
   useEffect(() => {
-    if (shouldPreserveScroll && scrollPosition > 0 && messages.length > 0 && !isRestoringScroll) {
-      console.log('📱 useEffect: Restoring scroll position to:', scrollPosition);
+    if (shouldPreserveScroll && scrollPosition > 0 && Array.isArray(messages) && messages.length > 0 && !isRestoringScroll) {
+      devLog('📱 useEffect: Restoring scroll position to:', scrollPosition);
       setIsRestoringScroll(true);
       
       // Use multiple attempts to ensure scroll restoration works
       const restoreScroll = () => {
         setTimeout(() => {
-          if (scrollRef.current) {
-            scrollRef.current.scrollTo({ y: scrollPosition, animated: false });
-            console.log('📱 Scroll restoration attempted');
-          }
+          scrollToPosition(scrollPosition, false);
+            devLog('📱 Scroll restoration attempted');
         }, 50);
         
         setTimeout(() => {
-          if (scrollRef.current) {
-            scrollRef.current.scrollTo({ y: scrollPosition, animated: false });
-            console.log('📱 Scroll restoration retry');
-          }
+          scrollToPosition(scrollPosition, false);
+            devLog('📱 Scroll restoration retry');
         }, 150);
         
         setTimeout(() => {
           setShouldPreserveScroll(false);
           setIsRestoringScroll(false);
-          console.log('📱 Scroll restoration completed');
+          devLog('📱 Scroll restoration completed');
         }, 200);
       };
       
       restoreScroll();
     }
-  }, [messages, shouldPreserveScroll, scrollPosition, isRestoringScroll]);
+  }, [messages, shouldPreserveScroll, scrollPosition, isRestoringScroll, scrollToPosition]);
 
   // Load messages when selectedAgent or selectedChatbox changes
   useEffect(() => {
     if (user && isInChat) {
       if (selectedAgent) {
-        console.log('🔄 Selected agent changed, loading messages for:', selectedAgent.name, 'ID:', selectedAgent.id);
+        devLog('🔄 Selected agent changed, loading messages for:', selectedAgent.name, 'ID:', selectedAgent.id);
       } else if (selectedChatbox) {
-        console.log('🔄 Selected chatbox changed, loading messages for:', selectedChatbox.title, 'ID:', selectedChatbox.id);
+        devLog('🔄 Selected chatbox changed, loading messages for:', selectedChatbox.title, 'ID:', selectedChatbox.id);
       } else {
-        console.log('🔄 General chat mode - loading general messages');
+        devLog('🔄 General chat mode - loading general messages');
       }
       loadMessages();
     }
   }, [selectedAgent?.id, selectedChatbox?.id, user?.id, isInChat]); // Use IDs instead of objects to prevent unnecessary re-renders
+
+  const scrollToEnd = useCallback((animated: boolean = false) => {
+    if (!scrollRef.current) return;
+    
+    try {
+      if ('scrollToEnd' in scrollRef.current) {
+        // Both FlatList and ScrollView support scrollToEnd
+        (scrollRef.current as any).scrollToEnd({ animated });
+      } else if ('scrollToOffset' in scrollRef.current && Array.isArray(displayedMessages) && displayedMessages.length > 0) {
+        // Fallback for FlatList: scroll to last item
+        const lastIndex = displayedMessages.length - 1;
+        (scrollRef.current as FlatList<ChatMessage>).scrollToIndex({ 
+          index: lastIndex, 
+          animated,
+          viewPosition: 1 // Scroll to bottom
+        });
+      }
+    } catch (error) {
+      // Silently handle scroll errors (e.g., when list is empty or not ready)
+      if (__DEV__) {
+        console.warn('Scroll to end failed:', error);
+      }
+    }
+  }, [displayedMessages]);
+
+  const handleInputChange = useCallback((text: string) => {
+    setInputMessage(text);
+  }, []);
+
+  // Memoize scroll handlers to prevent re-creation on every render
+  // Must be defined at top level, not in JSX
+  const handleScrollContentSizeChange = useCallback(() => {
+    // Restore scroll position if we're preserving it and not already restoring
+    if (shouldPreserveScroll && scrollPosition > 0 && !isRestoringScroll) {
+      setIsRestoringScroll(true);
+      setTimeout(() => {
+        scrollToPosition(scrollPosition, false);
+        setShouldPreserveScroll(false);
+        setIsRestoringScroll(false);
+      }, 100);
+    } else if (!shouldPreserveScroll && Array.isArray(displayedMessages) && displayedMessages.length > 0) {
+      // Auto-scroll to bottom when content changes (new messages)
+      scrollToEnd(false);
+    }
+  }, [displayedMessages, shouldPreserveScroll, scrollPosition, isRestoringScroll, scrollToPosition, scrollToEnd]);
+
+  const handleScrollLayout = useCallback(() => {
+    // Restore scroll position if we're preserving it and not already restoring
+    if (shouldPreserveScroll && scrollPosition > 0 && !isRestoringScroll) {
+      setIsRestoringScroll(true);
+      setTimeout(() => {
+        scrollToPosition(scrollPosition, false);
+        setShouldPreserveScroll(false);
+        setIsRestoringScroll(false);
+      }, 100);
+    } else if (!shouldPreserveScroll && Array.isArray(displayedMessages) && displayedMessages.length > 0) {
+      // Auto-scroll to bottom on layout (new messages)
+      scrollToEnd(false);
+    }
+  }, [displayedMessages, shouldPreserveScroll, scrollPosition, isRestoringScroll, scrollToPosition, scrollToEnd]);
 
   const loadChatHistory = async () => {
     if (!user) return;
@@ -405,7 +595,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
       return;
     }
     
-    console.log('📜 loadMessages called - Current state:', {
+    devLog('📜 loadMessages called - Current state:', {
       selectedAgent: selectedAgent?.name || 'none',
       selectedChatbox: selectedChatbox?.title || 'none',
       isInChat,
@@ -417,20 +607,20 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
     setIsLoading(true);
     try {
       if (selectedAgent) {
-        console.log('📜 Loading messages for user:', user.id, 'with agent:', selectedAgent.id, 'name:', selectedAgent.name);
+        devLog('📜 Loading messages for user:', user.id, 'with agent:', selectedAgent.id, 'name:', selectedAgent.name);
         // Add a small delay to show loading state when switching agents
         await new Promise(resolve => setTimeout(resolve, 300));
         
         const response = await apiService.getUserMessages(Number(user.id), 0, 100, selectedAgent.id);
-          console.log('📜 Messages response:', response);
+          devLog('📜 Messages response:', response);
         
-        if (response.data && response.data.messages) {
-          console.log('📜 Found', response.data.messages.length, 'messages');
+        if (response.data && response.data.messages && Array.isArray(response.data.messages)) {
+          devLog('📜 Found', response.data.messages.length, 'messages');
           
           // Debug: Check first message structure from API
-          if (response.data.messages.length > 0) {
+          if (__DEV__ && response.data.messages.length > 0) {
             const firstMsg = response.data.messages[0];
-            console.log('🔍 First message from API (with agent):', {
+            devLog('🔍 First message from API (with agent):', {
               id: firstMsg.id,
               hasAudioResponseId: !!firstMsg.audio_response_id,
               audioResponseId: firstMsg.audio_response_id,
@@ -463,15 +653,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
               created_at: msg.created_at,
             };
             
-            // Debug: Log if audio_response fields are missing
-            if (msg.audio_response_id && !msg.audio_response_data) {
-              console.warn('⚠️ Message has audio_response_id but no audio_response_data:', {
-                messageId: msg.id,
-                audioResponseId: msg.audio_response_id,
-                audioResponseData: msg.audio_response_data,
-                allMsgKeys: Object.keys(msg)
-              });
-            }
+            // Debug: Log if audio_response fields are missing (removed console.warn for performance)
             
             return processed;
           });
@@ -481,7 +663,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
             index === self.findIndex(m => m.id === msg.id)
           );
           
-          console.log('📜 Removed duplicates:', processedMessages.length - uniqueMessages.length, 'duplicates found');
+          devLog('📜 Removed duplicates:', processedMessages.length - uniqueMessages.length, 'duplicates found');
           
           // Sort messages chronologically (oldest first, newest last)
           const sortedMessages = uniqueMessages.sort((a, b) => {
@@ -490,23 +672,23 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
             return dateA - dateB; // Ascending order (oldest first)
           });
           
-          console.log('📜 Processed and sorted messages:', sortedMessages);
+          devLog('📜 Processed and sorted messages:', sortedMessages);
           // Replace messages to prevent duplicates when loading chat history
           setMessages(sortedMessages);
         } else {
-          console.log('📜 No messages found or invalid response format');
+          devLog('📜 No messages found or invalid response format');
           setMessages([]);
         }
       } else if (selectedChatbox) {
-        console.log('📜 Loading messages for user:', user.id, 'with chatbox:', selectedChatbox.id, 'title:', selectedChatbox.title);
+        devLog('📜 Loading messages for user:', user.id, 'with chatbox:', selectedChatbox.id, 'title:', selectedChatbox.title);
         // Add a small delay to show loading state when switching chatboxes
         await new Promise(resolve => setTimeout(resolve, 300));
         
         const response = await apiService.getChatboxWithMessages(selectedChatbox.id, Number(user.id), 0, 100);
-        console.log('📜 Chatbox messages response:', response);
+        devLog('📜 Chatbox messages response:', response);
         
-        if (response.data && response.data.messages) {
-          console.log('📜 Found', response.data.messages.length, 'messages in chatbox');
+        if (response.data && response.data.messages && Array.isArray(response.data.messages)) {
+          devLog('📜 Found', response.data.messages.length, 'messages in chatbox');
           // Process messages to ensure proper format with audio data
           let processedMessages = response.data.messages.map((msg: any) => ({
             id: msg.id,
@@ -527,7 +709,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
             index === self.findIndex(m => m.id === msg.id)
           );
           
-          console.log('📜 Removed chatbox duplicates:', processedMessages.length - uniqueMessages.length, 'duplicates found');
+          devLog('📜 Removed chatbox duplicates:', processedMessages.length - uniqueMessages.length, 'duplicates found');
           
           // Sort messages chronologically (oldest first, newest last)
           const sortedMessages = uniqueMessages.sort((a, b) => {
@@ -536,41 +718,43 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
             return dateA - dateB; // Ascending order (oldest first)
           });
           
-          console.log('📜 Processed and sorted chatbox messages:', sortedMessages);
+          devLog('📜 Processed and sorted chatbox messages:', sortedMessages);
           // Replace messages to prevent duplicates when loading chat history
           setMessages(sortedMessages);
         } else {
-          console.log('📜 No messages found in chatbox or invalid response format');
+          devLog('📜 No messages found in chatbox or invalid response format');
           setMessages([]);
         }
       } else {
         // General chat mode - no specific agent or chatbox selected
-        console.log('📜 General chat mode for user:', user.id, '(no specific agent or chatbox)');
+        devLog('📜 General chat mode for user:', user.id, '(no specific agent or chatbox)');
         
         // Check if this is a fresh general chat (requested via generalChat parameter with timestamp)
         if (route?.params?.generalChat && route?.params?.newChatTimestamp && lastNewChatTimestamp === route.params.newChatTimestamp) {
-          console.log('📜 Fresh general chat requested - starting with empty messages');
+          devLog('📜 Fresh general chat requested - starting with empty messages');
           setMessages([]);
           } else if (route?.params?.existingGeneralChat && route?.params?.existingChatTimestamp && lastExistingChatTimestamp === route.params.existingChatTimestamp) {
-          console.log('📜 Existing general chat requested - loading existing messages');
-          // Load existing general messages
+          devLog('📜 Existing general chat requested - loading existing messages');
+          // Load existing general messages (only messages without agent)
           await new Promise(resolve => setTimeout(resolve, 300));
           
-          const response = await apiService.getUserMessages(Number(user.id), 0, 100);
-          console.log('📜 General messages response:', response);
+          // Call API with agent_id=null to get only messages without agent
+          const response = await apiService.getUserMessages(Number(user.id), 0, 100, null);
+          devLog('📜 General messages response:', response);
           
-          if (response.data && response.data.messages) {
+          if (response.data && response.data.messages && Array.isArray(response.data.messages)) {
             // Filter for general messages (no agent_id and no chatbox_id)
+            // Note: Backend already filtered by agent_id=null, but we still need to filter by chatbox_id
             const generalMessages = response.data.messages.filter((msg: any) => 
               !msg.agent_id && !msg.chatbox_id
             );
             
-            console.log('📜 Found', generalMessages.length, 'general messages');
+            devLog('📜 Found', generalMessages.length, 'general messages');
             
             // Debug: Check first message structure from API
-            if (generalMessages.length > 0) {
+            if (__DEV__ && generalMessages.length > 0) {
               const firstMsg = generalMessages[0];
-              console.log('🔍 First general message from API:', {
+              devLog('🔍 First general message from API:', {
                 id: firstMsg.id,
                 hasAudioResponseId: !!firstMsg.audio_response_id,
                 audioResponseId: firstMsg.audio_response_id,
@@ -604,15 +788,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
                 created_at: msg.created_at,
               };
               
-              // Debug: Log if audio_response fields are missing
-              if (msg.audio_response_id && !msg.audio_response_data) {
-                console.warn('⚠️ General message has audio_response_id but no audio_response_data:', {
-                  messageId: msg.id,
-                  audioResponseId: msg.audio_response_id,
-                  audioResponseData: msg.audio_response_data,
-                  allMsgKeys: Object.keys(msg)
-                });
-              }
+              // Debug: Log if audio_response fields are missing (removed console.warn for performance)
               
               return processed;
             });
@@ -622,7 +798,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
               index === self.findIndex(m => m.id === msg.id)
             );
             
-            console.log('📜 Removed general duplicates:', processedMessages.length - uniqueMessages.length, 'duplicates found');
+            devLog('📜 Removed general duplicates:', processedMessages.length - uniqueMessages.length, 'duplicates found');
             
             // Sort messages chronologically (oldest first, newest last)
             const sortedMessages = uniqueMessages.sort((a, b) => {
@@ -631,31 +807,50 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
               return dateA - dateB; // Ascending order (oldest first)
             });
             
-            console.log('📜 Processed and sorted general messages:', sortedMessages);
+            devLog('📜 Processed and sorted general messages:', sortedMessages);
             // Replace messages to prevent duplicates when loading chat history
             setMessages(sortedMessages);
           } else {
-            console.log('📜 No general messages found or invalid response format');
+            devLog('📜 No general messages found or invalid response format');
             setMessages([]);
           }
         } else {
-          console.log('📜 Normal general chat mode - loading existing messages');
+          devLog('📜 Normal general chat mode - loading existing messages');
           // Load existing general messages (for normal general chat)
+          // Call API with agent_id=null to get only messages without agent
           await new Promise(resolve => setTimeout(resolve, 300));
           
-          const response = await apiService.getUserMessages(Number(user.id), 0, 100);
-          console.log('📜 General messages response:', response);
+          const response = await apiService.getUserMessages(Number(user.id), 0, 100, null);
+          devLog('📜 General messages response:', response);
           
-          if (response.data && response.data.messages) {
+          if (response.data && response.data.messages && Array.isArray(response.data.messages)) {
             // Filter for general messages (no agent_id and no chatbox_id)
+            // Note: Backend already filtered by agent_id=null, but we still need to filter by chatbox_id
             const generalMessages = response.data.messages.filter((msg: any) => 
               !msg.agent_id && !msg.chatbox_id
             );
             
-            console.log('📜 Found', generalMessages.length, 'general messages');
+            devLog('📜 Found', generalMessages.length, 'general messages');
             
-            // Process messages to ensure proper format
-            let processedMessages = generalMessages.map((msg: any) => ({
+            // Debug: Check first message structure from API
+            if (__DEV__ && generalMessages.length > 0) {
+              const firstMsg = generalMessages[0];
+              devLog('🔍 First general message from API (normal mode):', {
+                id: firstMsg.id,
+                hasAudioResponseId: !!firstMsg.audio_response_id,
+                audioResponseId: firstMsg.audio_response_id,
+                hasAudioResponseData: !!firstMsg.audio_response_data,
+                audioResponseDataType: typeof firstMsg.audio_response_data,
+                audioResponseDataLength: firstMsg.audio_response_data?.length,
+                audioResponseFormat: firstMsg.audio_response_format,
+                audioResponseDuration: firstMsg.audio_response_duration,
+                allKeys: Object.keys(firstMsg)
+              });
+            }
+            
+            // Process messages to ensure proper format - INCLUDING audio_response fields
+            let processedMessages = generalMessages.map((msg: any) => {
+              const processed = {
               id: msg.id,
               message: msg.message || '',
               response: msg.response || '',
@@ -666,15 +861,25 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
               audio_data: msg.audio_data,
               duration: msg.duration,
               audio_format: msg.audio_format,
+                // ADD audio_response fields - these were missing!
+                audio_response_id: msg.audio_response_id,
+                audio_response_data: msg.audio_response_data,
+                audio_response_duration: msg.audio_response_duration,
+                audio_response_format: msg.audio_response_format,
               created_at: msg.created_at,
-            }));
+              };
+              
+              // Debug: Log if audio_response fields are missing (removed console.warn for performance)
+              
+              return processed;
+            });
             
             // Remove duplicate messages by ID
             const uniqueMessages = processedMessages.filter((msg, index, self) => 
               index === self.findIndex(m => m.id === msg.id)
             );
             
-            console.log('📜 Removed general duplicates:', processedMessages.length - uniqueMessages.length, 'duplicates found');
+            devLog('📜 Removed general duplicates:', processedMessages.length - uniqueMessages.length, 'duplicates found');
             
             // Sort messages chronologically (oldest first, newest last)
             const sortedMessages = uniqueMessages.sort((a, b) => {
@@ -683,11 +888,11 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
               return dateA - dateB; // Ascending order (oldest first)
             });
             
-            console.log('📜 Processed and sorted general messages:', sortedMessages);
+            devLog('📜 Processed and sorted general messages:', sortedMessages);
             // Replace messages to prevent duplicates when loading chat history
             setMessages(sortedMessages);
           } else {
-            console.log('📜 No general messages found or invalid response format');
+            devLog('📜 No general messages found or invalid response format');
             setMessages([]);
           }
         }
@@ -695,18 +900,20 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
       
       // Only scroll to top when switching conversations, not on refresh
       if (!shouldPreserveScroll) {
-        console.log('📜 Switching conversation - scrolling to top');
+        devLog('📜 Switching conversation - scrolling to top');
         setTimeout(() => {
-          scrollRef.current?.scrollTo({ y: 0, animated: true });
+          scrollToPosition(0, true);
         }, 100);
       } else if (shouldPreserveScroll) {
-        console.log('📜 Preserving scroll position during refresh');
+        devLog('📜 Preserving scroll position during refresh');
         // Scroll position will be restored by onContentSizeChange/onLayout
       } else {
-        console.log('📜 No special scroll behavior needed');
+        devLog('📜 No special scroll behavior needed');
       }
     } catch (error) {
-      console.error('Error loading messages:', error);
+      if (__DEV__) {
+        console.error('Error loading messages:', error);
+      }
       Alert.alert(
         language === 'vi' ? 'Lỗi' : 'Error', 
         language === 'vi' ? 'Không thể tải tin nhắn' : 'Failed to load messages'
@@ -758,13 +965,14 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
 
     // Add user message immediately for real-time experience
     setMessages(prev => {
+      const safePrev = Array.isArray(prev) ? prev : [];
       // Check for duplicate messages by ID
-      const isDuplicate = prev.some(msg => msg.id === userMessage.id);
+      const isDuplicate = safePrev.some(msg => msg.id === userMessage.id);
       if (isDuplicate) {
         console.log('🔄 Duplicate user message detected, skipping:', userMessage.id);
-        return prev;
+        return safePrev;
       }
-      return [...prev, userMessage];
+      return [...safePrev, userMessage];
     });
     
     // Add a temporary "AI is typing" message
@@ -776,36 +984,38 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
       created_at: new Date().toISOString(),
     };
     setMessages(prev => {
+      const safePrev = Array.isArray(prev) ? prev : [];
       // Check for duplicate typing messages
-      const isDuplicate = prev.some(msg => msg.id === typingMessage.id);
+      const isDuplicate = safePrev.some(msg => msg.id === typingMessage.id);
       if (isDuplicate) {
         console.log('🔄 Duplicate typing message detected, skipping:', typingMessage.id);
-        return prev;
+        return safePrev;
       }
-      return [...prev, typingMessage];
+      return [...safePrev, typingMessage];
     });
     
     // Safety timeout: remove typing message after 30 seconds if it's still there
     const typingTimeout = setTimeout(() => {
       setMessages(prev => {
+          const safePrev = Array.isArray(prev) ? prev : [];
         const typingMessagePattern = language === 'vi' ? '🤖 AI đang trả lời...' : '🤖 AI is typing...';
-        const hasTypingMessage = prev.some(msg => 
+          const hasTypingMessage = safePrev.some(msg => 
           msg.response && msg.response.includes(typingMessagePattern)
         );
         
         if (hasTypingMessage) {
           console.log('⏰ Safety timeout: Removing stuck typing message');
-          return prev.filter(msg => 
+            return safePrev.filter(msg => 
             !msg.response || !msg.response.includes(typingMessagePattern)
           );
         }
-        return prev;
+          return safePrev;
       });
     }, 15000); // Reduced to 15 seconds for faster feedback
     
     // Scroll to bottom to show the new message
     setTimeout(() => {
-      scrollRef.current?.scrollToEnd({ animated: true });
+      scrollToEnd(true);
     }, 100);
 
     console.log('💬 ChatScreen: Sending message with agent:', selectedAgent?.id, 'chatbox:', selectedChatbox?.id);
@@ -882,12 +1092,13 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
 
         // Replace the typing message with the actual AI response
         setMessages(prev => {
+          const safePrev = Array.isArray(prev) ? prev : [];
           console.log('🔄 Removing typing message with ID:', typingMessageId);
-          console.log('🔄 Current messages before filter:', prev.map(m => ({ id: m.id, message: m.message, response: m.response, fileName: m.fileName })));
+          console.log('🔄 Current messages before filter:', safePrev.map(m => ({ id: m.id, message: m.message, response: m.response, fileName: m.fileName })));
           
           // Remove typing message by ID and content pattern
           const typingMessagePattern = language === 'vi' ? '🤖 AI đang trả lời...' : '🤖 AI is typing...';
-          const filteredMessages = prev.filter(msg => {
+          const filteredMessages = safePrev.filter(msg => {
             // Remove by ID (most reliable)
             if (msg.id === typingMessageId) {
               console.log('🔄 Removing typing message by ID:', msg.id, msg.response);
@@ -934,7 +1145,6 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
         console.log(`💬 AI Response length: ${responseLength} characters`);
         
         // Note: TTS is now handled by backend gTTS - no need for frontend TTS
-        console.log('🔊 Text message processed - TTS handled by backend gTTS');
       }
       
       // Clear the typing timeout since we got a response
@@ -952,8 +1162,9 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
           console.log('🔄 Duplicate message detected, keeping user message');
           // For duplicate messages, keep the user message but remove typing message
           setMessages(prev => {
+            const safePrev = Array.isArray(prev) ? prev : [];
             const typingMessagePattern = language === 'vi' ? '🤖 AI đang trả lời...' : '🤖 AI is typing...';
-            return prev.filter(msg => 
+            return safePrev.filter(msg => 
               !msg.response || !msg.response.includes(typingMessagePattern)
             );
           });
@@ -973,10 +1184,11 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
       );
       // Remove the temporary messages on error
       setMessages(prev => {
+        const safePrev = Array.isArray(prev) ? prev : [];
         console.log('❌ Error cleanup: Removing temporary messages');
         const typingMessagePattern = language === 'vi' ? '🤖 AI đang trả lời...' : '🤖 AI is typing...';
         
-        const filteredMessages = prev.filter(msg => {
+        const filteredMessages = safePrev.filter(msg => {
           // Remove user message and typing message by ID
           if (msg.id === userMessage.id || msg.id === typingMessageId) {
             console.log('❌ Removing temporary message by ID:', msg.id);
@@ -1073,7 +1285,10 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
           onPress: async () => {
             try {
               await apiService.deleteMessage(messageId, Number(user.id));
-              setMessages(prev => prev.filter(msg => msg.id !== messageId));
+              setMessages(prev => {
+                const safePrev = Array.isArray(prev) ? prev : [];
+                return safePrev.filter(msg => msg.id !== messageId);
+              });
             } catch (error) {
               console.error('Error deleting message:', error);
               Alert.alert(
@@ -1206,8 +1421,6 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
   };
 
   const handleVoiceMessageComplete = async (audioFile: File | Blob | string, duration: number) => {
-    console.log('🎤 Voice message recorded:', audioFile, 'Duration:', duration);
-    
     try {
       // Add typing indicator immediately
       const typingMessage: ChatMessage = {
@@ -1217,7 +1430,10 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
         user_id: Number(user.id),
         created_at: new Date().toISOString(),
       };
-      setMessages(prev => [...prev, typingMessage]);
+      setMessages(prev => {
+        const safePrev = Array.isArray(prev) ? prev : [];
+        return [...safePrev, typingMessage];
+      });
 
       // Send audio to backend for speech-to-text processing
       try {
@@ -1248,7 +1464,6 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
             }
           }
           
-          console.log('🎤 Using multipart upload for audio file, format:', audioFormat);
           response = await apiService.uploadVoiceMessage(
             Number(user.id),
             audioFile,
@@ -1260,7 +1475,6 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
           );
         } else {
           // For mobile URI strings, use base64 upload (multipart not supported in RN)
-          console.log('🎤 Using base64 upload for mobile URI');
           let audioData: string;
           let audioFormat: string = 'wav';
           
@@ -1290,7 +1504,6 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
                 }
               }
             } catch (error) {
-              console.error('❌ Failed to process web audio file:', error);
               throw new Error('Failed to process web audio file');
             }
           } else {
@@ -1322,7 +1535,10 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
 
         if (response.data) {
           // Remove typing message
-          setMessages(prev => prev.filter(msg => msg.id !== typingMessage.id));
+          setMessages(prev => {
+            const safePrev = Array.isArray(prev) ? prev : [];
+            return safePrev.filter(msg => msg.id !== typingMessage.id);
+          });
 
           // Add the user's voice message with audio data from backend
           const userVoiceMessage: ChatMessage = {
@@ -1351,15 +1567,19 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
             audio_response_format: response.data.audio_response_format,
           };
 
-          setMessages(prev => [...prev, userVoiceMessage, aiMessage]);
+          setMessages(prev => {
+            const safePrev = Array.isArray(prev) ? prev : [];
+            return [...safePrev, userVoiceMessage, aiMessage];
+          });
 
           // Note: TTS is now handled by backend gTTS - no need for frontend TTS
-          console.log('🔊 Voice message processed - TTS handled by backend gTTS');
         }
       } catch (error) {
-        console.error('❌ Error processing voice message:', error);
         // Remove typing message and show error
-        setMessages(prev => prev.filter(msg => msg.id !== typingMessage.id));
+        setMessages(prev => {
+          const safePrev = Array.isArray(prev) ? prev : [];
+          return safePrev.filter(msg => msg.id !== typingMessage.id);
+        });
         
         Alert.alert(
           language === 'vi' ? 'Lỗi Xử Lý' : 'Processing Error',
@@ -1374,7 +1594,6 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
       setShowVoiceRecorder(false);
 
     } catch (error) {
-      console.error('❌ Error handling voice message:', error);
       Alert.alert(
         language === 'vi' ? 'Lỗi' : 'Error',
         language === 'vi' 
@@ -1390,7 +1609,6 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
   };
 
   const handleInlineVoiceRecord = () => {
-    console.log('🎤 Inline voice record button pressed');
     setShowInlineVoiceRecorder(true);
     setIsRecordingVoice(true);
   };
@@ -1401,8 +1619,6 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
   };
 
   const handleInlineVoiceMessageComplete = async (audioFile: File | Blob | string, duration: number) => {
-    console.log('🎤 Inline voice message recorded:', audioFile, 'Duration:', duration);
-    
     // Close the inline recorder
     setShowInlineVoiceRecorder(false);
     setIsRecordingVoice(false);
@@ -1413,8 +1629,6 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
 
   const handleSpeechButtonPress = async () => {
     // Speech-to-text functionality
-    console.log('🎤 Speech button pressed, isListening:', isListening);
-    
     if (!sttAvailable) {
       Alert.alert(
         language === 'vi' ? 'Tính Năng Không Khả Dụng' : 'Feature Not Available',
@@ -1429,13 +1643,10 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
     try {
       if (isListening) {
         await stopListening();
-        console.log('🎤 Stopped listening');
       } else {
         await startListening();
-        console.log('🎤 Started listening');
       }
     } catch (error) {
-      console.error('❌ Speech recognition error:', error);
       Alert.alert(
         language === 'vi' ? 'Lỗi Nhận Dạng Giọng Nói' : 'Speech Recognition Error',
         language === 'vi' 
@@ -1519,10 +1730,13 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
     console.log('💬 Adding user message to chat:', userMessage);
     console.log('💬 User message fileName:', userMessage.fileName);
     setMessages(prev => {
-      const newMessages = [...prev, userMessage];
+      const safePrev = Array.isArray(prev) ? prev : [];
+      const newMessages = [...safePrev, userMessage];
       console.log('💬 Updated messages count:', newMessages.length);
+      if (newMessages.length > 0) {
       console.log('💬 Last message:', newMessages[newMessages.length - 1]);
       console.log('💬 Last message fileName:', newMessages[newMessages.length - 1].fileName);
+      }
       return newMessages;
     });
     
@@ -1537,7 +1751,8 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
     
     console.log('💬 Adding typing message to chat:', typingMessage);
     setMessages(prev => {
-      const newMessages = [...prev, typingMessage];
+      const safePrev = Array.isArray(prev) ? prev : [];
+      const newMessages = [...safePrev, typingMessage];
       console.log('💬 Updated messages count with typing:', newMessages.length);
       return newMessages;
     });
@@ -1595,7 +1810,8 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
         // Remove the typing message
         console.log('💬 Removing typing message with ID:', typingMessageId);
         setMessages(prev => {
-          const filteredMessages = prev.filter(msg => msg.id !== typingMessageId);
+          const safePrev = Array.isArray(prev) ? prev : [];
+          const filteredMessages = safePrev.filter(msg => msg.id !== typingMessageId);
           console.log('💬 Messages after removing typing:', filteredMessages.length);
           return filteredMessages;
         });
@@ -1611,7 +1827,8 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
         
         console.log('💬 Adding response message to chat:', responseMessage);
         setMessages(prev => {
-          const newMessages = [...prev, responseMessage];
+          const safePrev = Array.isArray(prev) ? prev : [];
+          const newMessages = [...safePrev, responseMessage];
           console.log('💬 Final messages count:', newMessages.length);
           return newMessages;
         });
@@ -1643,7 +1860,10 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
         created_at: new Date().toISOString(),
       };
       
-      setMessages(prev => [...prev, errorMessage]);
+      setMessages(prev => {
+        const safePrev = Array.isArray(prev) ? prev : [];
+        return [...safePrev, errorMessage];
+      });
     } finally {
       setIsSending(false);
       isSendingRef.current = false;
@@ -1730,6 +1950,50 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
   const pickImage = async () => {
     try {
       console.log('📸 pickImage called - Image option selected!');
+      
+      if (Platform.OS === 'web') {
+        console.log('📸 Web platform: Creating file input for images');
+        // Web platform: Use HTML file input
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        
+        input.onchange = async (event: any) => {
+          console.log('📸 File input changed, processing image');
+          const file = event.target.files[0];
+          if (file) {
+            console.log('📸 File selected:', file.name, 'Size:', file.size, 'Type:', file.type);
+            try {
+              // Create a blob URL for the image to use as URI
+              const blobUrl = URL.createObjectURL(file);
+              
+              // Set the selected image and show the image modal
+              setSelectedImage(blobUrl);
+              setSelectedDocument(null);
+              setSelectedFileName(file.name || 'image.jpg');
+              setSelectedFileType('image');
+              setImageModalVisible(true);
+              setImageLoading(true);
+              setImageError(null);
+              
+              console.log('📸 Modal should be visible now, selectedImage:', blobUrl);
+            } catch (error) {
+              console.error('Error processing image:', error);
+              Alert.alert(
+                language === 'vi' ? 'Lỗi' : 'Error',
+                language === 'vi' ? 'Không thể xử lý ảnh' : 'Could not process image'
+              );
+            }
+          } else {
+            console.log('📸 No file selected');
+          }
+        };
+        
+        console.log('📸 Clicking file input');
+        input.click();
+        return; // Exit early for web platform
+      } else {
+        // Mobile platform: Use DocumentPicker
       console.log('📸 Opening document picker for images...');
       
       const result = await DocumentPicker.getDocumentAsync({
@@ -1772,6 +2036,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
       setImageError(null);
       
       console.log('📸 Modal should be visible now, selectedImage:', file.uri);
+      }
     } catch (error) {
       console.error('❌ Error picking image:', error);
       Alert.alert(
@@ -1784,6 +2049,75 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
   const pickDocument = async () => {
     try {
       console.log('📄 pickDocument called - Document option selected!');
+      
+      if (Platform.OS === 'web') {
+        console.log('📄 Web platform: Creating file input for documents');
+        // Web platform: Use HTML file input
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.txt,.pdf,.doc,.docx,.md';
+        
+        input.onchange = async (event: any) => {
+          console.log('📄 File input changed, processing document');
+          const file = event.target.files[0];
+          if (file) {
+            console.log('📄 File selected:', file.name, 'Size:', file.size, 'Type:', file.type);
+            try {
+              // Read file content based on type
+              let content: string = '';
+              
+              if (file.type === 'text/plain' || file.name.endsWith('.txt') || file.name.endsWith('.md')) {
+                // Text files - read as text
+                content = await file.text();
+              } else if (file.type === 'application/pdf') {
+                // PDF files - read as base64 for now (backend will handle processing)
+                const arrayBuffer = await file.arrayBuffer();
+                const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+                content = `[PDF:${base64}]`;
+              } else {
+                // Other document types - try to read as text or base64
+                try {
+                  content = await file.text();
+                } catch {
+                  // If text reading fails, use base64
+                  const arrayBuffer = await file.arrayBuffer();
+                  const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+                  content = `[DOCUMENT:${base64}]`;
+                }
+              }
+              
+              console.log('📄 File content read successfully, length:', content.length);
+              
+              // Create a blob URL for the file to use as URI
+              const blobUrl = URL.createObjectURL(file);
+              
+              // Set the selected document and show the modal
+              setSelectedImage(null);
+              setSelectedDocument(blobUrl);
+              setSelectedFileName(file.name || 'document.txt');
+              setSelectedFileType('document');
+              setImageModalVisible(true);
+              setImageLoading(true);
+              setImageError(null);
+              
+              console.log('📄 Modal should be visible now, selectedDocument:', blobUrl);
+            } catch (error) {
+              console.error('Error reading file:', error);
+              Alert.alert(
+                language === 'vi' ? 'Lỗi' : 'Error',
+                language === 'vi' ? 'Không thể đọc tệp' : 'Could not read file'
+              );
+            }
+          } else {
+            console.log('📄 No file selected');
+          }
+        };
+        
+        console.log('📄 Clicking file input');
+        input.click();
+        return; // Exit early for web platform
+      } else {
+        // Mobile platform: Use DocumentPicker
       console.log('📄 Opening document picker for documents...');
       
       const result = await DocumentPicker.getDocumentAsync({
@@ -1826,6 +2160,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
       setImageError(null);
       
       console.log('📄 Modal should be visible now, selectedDocument:', file.uri);
+      }
     } catch (error) {
       console.error('❌ Error picking document:', error);
       Alert.alert(
@@ -1841,10 +2176,25 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
       
       setIsSending(true);
       
-      // Convert image to base64 for sending
-      const base64 = await readAsStringAsync(imageUri, {
+      let base64: string = '';
+      
+      if (Platform.OS === 'web') {
+        // Web platform: imageUri is a blob URL
+        try {
+          const response = await fetch(imageUri);
+          const blob = await response.blob();
+          const arrayBuffer = await blob.arrayBuffer();
+          base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+        } catch (error) {
+          console.error('Error reading image from blob URL:', error);
+          throw error;
+        }
+      } else {
+        // Mobile platform: Convert image to base64 for sending
+        base64 = await readAsStringAsync(imageUri, {
         encoding: 'base64' as any,
       });
+      }
       
       // Create a message that includes both image and text
       const imageMessage = `[IMAGE:${base64}] ${messageText}`;
@@ -1893,10 +2243,33 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
       
       setIsSending(true);
       
-      // Read document content as text
-      const content = await readAsStringAsync(documentUri, {
+      let content: string = '';
+      
+      if (Platform.OS === 'web') {
+        // Web platform: documentUri is a blob URL
+        try {
+          const response = await fetch(documentUri);
+          const blob = await response.blob();
+          
+          // Try to read as text first
+          if (fileName.endsWith('.txt') || fileName.endsWith('.md')) {
+            content = await blob.text();
+          } else {
+            // For other file types, convert to base64
+            const arrayBuffer = await blob.arrayBuffer();
+            const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+            content = `[DOCUMENT:${fileName}] ${base64}`;
+          }
+        } catch (error) {
+          console.error('Error reading document from blob URL:', error);
+          throw error;
+        }
+      } else {
+        // Mobile platform: Read document content as text
+        content = await readAsStringAsync(documentUri, {
         encoding: 'utf8' as any,
       });
+      }
       
       // Create a message that includes both document content and text
       const documentMessage = `[DOCUMENT:${fileName}] ${content} ${messageText}`;
@@ -1966,7 +2339,12 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
     return getSafeTimestampUtil(dateString);
   };
 
+  // Define helper functions first (they will be used in useMemo below)
   const getConversationsByAgent = () => {
+    if (!Array.isArray(chatHistory)) {
+      return [];
+    }
+    
     console.log('🔄 ChatScreen: getConversationsByAgent called');
     console.log('🔄 ChatScreen: chatHistory length:', chatHistory.length);
     
@@ -2001,6 +2379,10 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
   };
 
   const getConversationsByChatbox = () => {
+    if (!Array.isArray(chatHistory) || !Array.isArray(allChatboxes)) {
+      return [];
+    }
+    
     console.log('🔄 ChatScreen: getConversationsByChatbox called');
     console.log('🔄 ChatScreen: chatHistory length:', chatHistory.length);
     console.log('🔄 ChatScreen: allChatboxes length:', allChatboxes.length);
@@ -2036,6 +2418,10 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
   };
 
   const getGeneralConversations = () => {
+    if (!Array.isArray(chatHistory)) {
+      return [];
+    }
+    
     console.log('🔄 ChatScreen: getGeneralConversations called');
     
     // Get messages that have no agent_id and no chatbox_id (general chat)
@@ -2064,6 +2450,55 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
     console.log('🔄 ChatScreen: Returning 1 general conversation with', sortedMessages.length, 'messages');
     return [generalConversation];
   };
+
+  // Memoize conversations data to prevent recalculation on every render
+  // Must be after helper functions are defined, but before they are used in JSX
+  const allConversations = useMemo(() => {
+    const agentConversations = getConversationsByAgent();
+    const chatboxConversations = getConversationsByChatbox();
+    const generalConversations = getGeneralConversations();
+    return [...agentConversations, ...chatboxConversations, ...generalConversations];
+  }, [chatHistory, allAgents, allChatboxes]);
+
+  // Memoize message renderer for FlatList
+  const renderMessageItem = useCallback(({ item: message }: { item: ChatMessage }) => {
+    // Skip rendering if both message and response are empty
+    if (!message.message && !message.response) {
+      return null;
+    }
+    
+    return (
+      <React.Fragment>
+        {/* User Message - only render if message exists */}
+        {message.message && (
+          <ChatMessageBubble
+            message={message}
+            response={message.response}
+            isUser={true}
+            timestamp={message.created_at}
+            agentId={selectedAgent?.id}
+            animated={!attachmentOptionsVisible}
+            isLegacyVoiceMessage={false}
+          />
+        )}
+        {/* AI Response - only render if response exists */}
+        {message.response && (
+          <ChatMessageBubble
+            message={message}
+            response={message.response}
+            isUser={false}
+            timestamp={message.created_at}
+            agentId={selectedAgent?.id}
+            animated={!attachmentOptionsVisible}
+            isLegacyVoiceMessage={false}
+          />
+        )}
+      </React.Fragment>
+    );
+  }, [selectedAgent?.id, attachmentOptionsVisible]);
+
+  // Key extractor for FlatList
+  const keyExtractor = useCallback((item: ChatMessage) => String(item.id), []);
 
   const getAgentName = (agentId?: number) => {
     if (!agentId) return language === 'vi' ? 'Không có Agent' : 'No Agent';
@@ -2277,7 +2712,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
                       {message.fileName}
                     </Text>
                     <Text style={[styles.fileSize, { color: theme.colors.surface + '80' }]}>
-                      {Math.round(message.message.length / 1024 * 100) / 100} KB
+                      {Math.round((message.message?.length || 0) / 1024 * 100) / 100} KB
                     </Text>
                   </View>
                 </View>
@@ -2828,16 +3263,20 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
     );
   }
 
+  const ContainerComponent = Platform.OS === 'web' ? View : SafeAreaView;
+  
   return (
     <>
-    <SafeAreaView 
+    <ContainerComponent 
       style={[styles.container, { backgroundColor: theme.type === 'dark' ? '#0F0F23' : '#667EEA' }]}
     >
-      <StatusBar 
+      {Platform.OS !== 'web' && (
+        <StatusBar 
           barStyle="light-content"
           backgroundColor="transparent"
           translucent={true}
         />
+      )}
         
         {/* Modern Gradient Header */}
         <LinearGradient
@@ -2954,56 +3393,19 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
       {isInChat ? (
         // Modern Chat Interface
         <>
-          {/* Messages Container */}
-          <ScrollView 
-            ref={scrollRef}
+          {/* Messages Container - Use FlatList for better performance */}
+          <FlatList
+            ref={scrollRef as React.RefObject<FlatList<ChatMessage>>}
+            data={displayedMessages}
+            renderItem={renderMessageItem}
+            keyExtractor={keyExtractor}
             style={styles.messagesContainer}
             contentContainerStyle={styles.messagesContent}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
-            onContentSizeChange={() => {
-              console.log('📱 FlatList content size changed, messages length:', messages.length);
-              console.log('📱 Should preserve scroll:', shouldPreserveScroll, 'Scroll position:', scrollPosition);
-              
-              // Restore scroll position if we're preserving it and not already restoring
-              if (shouldPreserveScroll && scrollPosition > 0 && !isRestoringScroll) {
-                console.log('📱 Restoring scroll position to:', scrollPosition);
-                setIsRestoringScroll(true);
-                setTimeout(() => {
-                  scrollRef.current?.scrollTo({ y: scrollPosition, animated: false });
-                  setShouldPreserveScroll(false);
-                  setIsRestoringScroll(false);
-                  console.log('📱 Scroll position restored');
-                }, 100); // Increased delay for better reliability
-              } else if (!shouldPreserveScroll && messages.length > 0) {
-                // Auto-scroll to bottom when content changes (new messages)
-                console.log('📱 Auto-scrolling to bottom');
-                scrollRef.current?.scrollToEnd({ animated: false });
-              }
-            }}
-            onLayout={() => {
-              console.log('📱 FlatList layout changed, messages length:', messages.length);
-              console.log('📱 Should preserve scroll:', shouldPreserveScroll, 'Scroll position:', scrollPosition);
-              
-              // Restore scroll position if we're preserving it and not already restoring
-              if (shouldPreserveScroll && scrollPosition > 0 && !isRestoringScroll) {
-                console.log('📱 Restoring scroll position to:', scrollPosition);
-                setIsRestoringScroll(true);
-                setTimeout(() => {
-                  scrollRef.current?.scrollTo({ y: scrollPosition, animated: false });
-                  setShouldPreserveScroll(false);
-                  setIsRestoringScroll(false);
-                  console.log('📱 Scroll position restored');
-                }, 100); // Increased delay for better reliability
-              } else if (!shouldPreserveScroll && messages.length > 0) {
-                // Auto-scroll to bottom on layout (new messages)
-                console.log('📱 Auto-scrolling to bottom');
-                scrollRef.current?.scrollToEnd({ animated: false });
-              }
-            }}
-          >
-            {/* Message Content */}
-            {isLoading ? (
+            onContentSizeChange={handleScrollContentSizeChange}
+            onLayout={handleScrollLayout}
+            ListEmptyComponent={isLoading ? (
               <View style={styles.loadingContainer}>
                 <LinearGradient
                   colors={['rgba(102,126,234,0.1)', 'rgba(118,75,162,0.1)'] as [string, string, ...string[]]}
@@ -3015,105 +3417,110 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
                 </Text>
                 </LinearGradient>
               </View>
-            ) : messages.length === 0 ? (
-              renderEmptyState()
-            ) : (
-              messages.map((message, index) => {
-                // Skip rendering if both message and response are empty
-                if (!message.message && !message.response) {
-                  return null;
-                }
-                
-                return (
-                <React.Fragment key={message.id}>
-                    {/* User Message - only render if message exists */}
-                    {message.message && (
-                  <ChatMessageBubble
-                    message={message}
-                    response={message.response}
-                    isUser={true}
-                    timestamp={message.created_at}
-                    agentId={selectedAgent?.id}
-                    animated={!attachmentOptionsVisible}
-                    isLegacyVoiceMessage={false}
-                  />
-                    )}
-                    {/* AI Response - only render if response exists */}
-                  {message.response && (
-                    <ChatMessageBubble
-                      message={message}
-                      response={message.response}
-                      isUser={false}
-                      timestamp={message.created_at}
-                      agentId={selectedAgent?.id}
-                      animated={!attachmentOptionsVisible}
-                      isLegacyVoiceMessage={false}
-                    />
-                  )}
-                </React.Fragment>
-                );
-              })
-            )}
-          </ScrollView>
+            ) : renderEmptyState()}
+            inverted={false}
+            removeClippedSubviews={true}
+            initialNumToRender={10}
+            maxToRenderPerBatch={5}
+            windowSize={10}
+            updateCellsBatchingPeriod={50}
+            getItemLayout={(data, index) => ({
+              length: 100, // Estimated item height
+              offset: 100 * index,
+              index,
+            })}
+          />
 
           {/* Modern Input Section */}
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            style={styles.modernInputContainer}
-            enabled={!attachmentOptionsVisible && !showInlineVoiceRecorder}
-            keyboardVerticalOffset={0}
-          >
-            {/* Voice Gender Selector */}
-            <VoiceGenderSelector
-              useFemaleVoice={useFemaleVoice}
-              onGenderChange={setUseFemaleVoice}
-              style={{ paddingHorizontal: 16, paddingTop: 8 }}
-            />
-            
-            <ChatInput
-                value={inputMessage}
-                onChangeText={setInputMessage}
-              onSend={sendMessage}
-              onAttach={() => {
-                console.log('🔘 Attachment button pressed!');
-                console.log('🔘 Current state - isSending:', isSending, 'isInChat:', isInChat);
-                handleImportTxt();
-              }}
-              onSpeech={handleSpeechButtonPress}
-              onVoiceRecord={handleInlineVoiceRecord}
-                placeholder={
-                  isListening
-                    ? (language === 'vi' ? 'Đang nghe...' : 'Listening...')
-                    : (language === 'vi' ? 'Nhập tin nhắn của bạn...' : 'Type your message...')
+          {Platform.OS === 'android' ? (
+            <Animated.View
+              style={[
+                styles.modernInputContainer,
+                {
+                  paddingBottom: 8,
+                  transform: [
+                    {
+                      translateY: Animated.multiply(keyboardAnim, -1),
+                    },
+                  ],
                 }
-                disabled={isSending}
-              showAttach={true}
-              showSpeech={true}
-              showVoiceRecord={true}
-              isListening={isListening}
-              isRecording={isRecordingVoice}
-            />
-          </KeyboardAvoidingView>
+              ]}
+            >
+              {/* Voice Gender Selector */}
+              <VoiceGenderSelector
+                useFemaleVoice={useFemaleVoice}
+                onGenderChange={setUseFemaleVoice}
+                style={{ paddingHorizontal: 16, paddingTop: 8 }}
+              />
+              
+              <ChatInput
+                  value={inputMessage}
+                  onChangeText={handleInputChange}
+                onSend={sendMessage}
+                onAttach={() => {
+                  console.log('🔘 Attachment button pressed!');
+                  console.log('🔘 Current state - isSending:', isSending, 'isInChat:', isInChat);
+                  handleImportTxt();
+                }}
+                onSpeech={handleSpeechButtonPress}
+                onVoiceRecord={handleInlineVoiceRecord}
+                  placeholder={
+                    isListening
+                      ? (language === 'vi' ? 'Đang nghe...' : 'Listening...')
+                      : (language === 'vi' ? 'Nhập tin nhắn của bạn...' : 'Type your message...')
+                  }
+                  disabled={isSending}
+                showAttach={true}
+                showSpeech={true}
+                showVoiceRecord={true}
+                isListening={isListening}
+                isRecording={isRecordingVoice}
+              />
+            </Animated.View>
+          ) : (
+            <KeyboardAvoidingView
+              behavior="padding"
+              style={styles.modernInputContainer}
+              enabled={!attachmentOptionsVisible && !showInlineVoiceRecorder}
+              keyboardVerticalOffset={0}
+            >
+              {/* Voice Gender Selector */}
+              <VoiceGenderSelector
+                useFemaleVoice={useFemaleVoice}
+                onGenderChange={setUseFemaleVoice}
+                style={{ paddingHorizontal: 16, paddingTop: 8 }}
+              />
+              
+              <ChatInput
+                  value={inputMessage}
+                  onChangeText={handleInputChange}
+                onSend={sendMessage}
+                onAttach={() => {
+                  console.log('🔘 Attachment button pressed!');
+                  console.log('🔘 Current state - isSending:', isSending, 'isInChat:', isInChat);
+                  handleImportTxt();
+                }}
+                onSpeech={handleSpeechButtonPress}
+                onVoiceRecord={handleInlineVoiceRecord}
+                  placeholder={
+                    isListening
+                      ? (language === 'vi' ? 'Đang nghe...' : 'Listening...')
+                      : (language === 'vi' ? 'Nhập tin nhắn của bạn...' : 'Type your message...')
+                  }
+                  disabled={isSending}
+                showAttach={true}
+                showSpeech={true}
+                showVoiceRecord={true}
+                isListening={isListening}
+                isRecording={isRecordingVoice}
+              />
+            </KeyboardAvoidingView>
+          )}
         </>
       ) : (
         // Conversations List
         <FlatList
-          data={(() => {
-            const agentConversations = getConversationsByAgent();
-            const chatboxConversations = getConversationsByChatbox();
-            const generalConversations = getGeneralConversations();
-            const allConversations = [...agentConversations, ...chatboxConversations, ...generalConversations];
-            
-            console.log('🔄 ChatScreen: FlatList data debug:', {
-              agentConversations: agentConversations.length,
-              chatboxConversations: chatboxConversations.length,
-              generalConversations: generalConversations.length,
-              totalConversations: allConversations.length,
-              chatboxDetails: chatboxConversations.map(c => ({ id: c.chatboxId, messageCount: c.messages.length }))
-            });
-            
-            return allConversations;
-          })()}
+          data={allConversations}
           keyExtractor={(item) => String('agentId' in item ? item.agentId : item.chatboxId)}
           renderItem={renderConversationItem}
           contentContainerStyle={styles.conversationsList}
@@ -3128,6 +3535,11 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
               setIsRefreshingConversations(false);
             }
           }}
+          removeClippedSubviews={true}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={10}
+          updateCellsBatchingPeriod={50}
         />
       )}
       
@@ -3262,7 +3674,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
               placeholderTextColor={theme.colors.textSecondary}
               multiline={true}
               numberOfLines={3}
-              onChangeText={setInputMessage}
+              onChangeText={handleInputChange}
               value={inputMessage}
             />
             
@@ -3374,7 +3786,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
         />
       )}
 
-    </SafeAreaView>
+    </ContainerComponent>
     
     {/* Attachment Options Mini Table - Production Design */}
       {attachmentOptionsVisible && (
@@ -3524,6 +3936,33 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
         </TouchableOpacity>
       </View>
     )}
+
+    {/* Newbie Guide Modal */}
+    <NewbieGuideModal
+      visible={showNewbieGuide}
+      onClose={async () => {
+        setShowNewbieGuide(false);
+        if (user) {
+          try {
+            const guideKey = `newbie_guide_shown_${user.id}`;
+            await AsyncStorage.setItem(guideKey, 'true');
+          } catch (error) {
+            console.error('Error saving guide status:', error);
+          }
+        }
+      }}
+      onDontShowAgain={async () => {
+        setShowNewbieGuide(false);
+        if (user) {
+          try {
+            const guideKey = `newbie_guide_shown_${user.id}`;
+            await AsyncStorage.setItem(guideKey, 'true');
+          } catch (error) {
+            console.error('Error saving guide status:', error);
+          }
+        }
+      }}
+    />
     </>
   );
 };

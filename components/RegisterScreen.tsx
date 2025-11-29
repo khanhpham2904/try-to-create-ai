@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   SafeAreaView,
   StatusBar,
+  CheckBox,
 } from 'react-native';
 import { AuthContext } from './AuthContext';
 import { AnimatedButton, AnimatedLogo } from './AnimatedComponents';
@@ -30,6 +31,7 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({ navigation }) =>
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [confirmPassword, setConfirmPassword] = React.useState('');
+  const [acceptedTerms, setAcceptedTerms] = React.useState(false);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [validation, setValidation] = React.useState<{ name: boolean; email: boolean; password: boolean; confirmPassword: boolean }>({ 
     name: false, 
@@ -72,6 +74,17 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({ navigation }) =>
   const handleRegister = async () => {
     // Clear previous errors
     setErrors({});
+    
+    // Check if terms are accepted
+    if (!acceptedTerms) {
+      Alert.alert(
+        t('language') === 'vi' ? 'Yêu Cầu Đồng Ý' : 'Agreement Required',
+        t('language') === 'vi' 
+          ? 'Vui lòng đồng ý với Điều khoản Sử dụng và Chính sách Bảo mật để tiếp tục.' 
+          : 'Please agree to the Terms of Service and Privacy Policy to continue.'
+      );
+      return;
+    }
     
     // Validate form
     const validation = validateRegistration(name, email, password, confirmPassword);
@@ -218,15 +231,66 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({ navigation }) =>
                 leftIcon="lock-outline"
               />
 
+              {/* Terms and Conditions Checkbox */}
+              <View style={styles.termsContainer}>
+                <TouchableOpacity
+                  style={styles.checkboxContainer}
+                  onPress={() => setAcceptedTerms(!acceptedTerms)}
+                  activeOpacity={0.7}
+                >
+                  <View style={[
+                    styles.checkbox,
+                    {
+                      backgroundColor: acceptedTerms ? theme.colors.primary : 'transparent',
+                      borderColor: acceptedTerms ? theme.colors.primary : theme.colors.border,
+                    }
+                  ]}>
+                    {acceptedTerms && (
+                      <Icon name="check" size={16} color="white" />
+                    )}
+                  </View>
+                  <View style={styles.termsTextContainer}>
+                    <Text style={[styles.termsText, { color: theme.colors.text }]}>
+                      {t('language') === 'vi' ? 'Tôi đồng ý với ' : 'I agree to the '}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => navigation.navigate('TermsOfService')}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.termsLink, { color: theme.colors.primary }]}>
+                        {t('language') === 'vi' ? 'Điều khoản Sử dụng' : 'Terms of Service'}
+                      </Text>
+                    </TouchableOpacity>
+                    <Text style={[styles.termsText, { color: theme.colors.text }]}>
+                      {t('language') === 'vi' ? ' và ' : ' and '}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => navigation.navigate('PrivacyPolicy')}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.termsLink, { color: theme.colors.primary }]}>
+                        {t('language') === 'vi' ? 'Chính sách Bảo mật' : 'Privacy Policy'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </TouchableOpacity>
+                {!acceptedTerms && errors.terms && (
+                  <Text style={[styles.errorText, { color: theme.colors.error }]}>
+                    {errors.terms}
+                  </Text>
+                )}
+              </View>
+
               <AnimatedButton
                 title={isLoading ? "" : (t('language') === 'vi' ? 'Tạo Tài Khoản' : 'Create Account')}
                 onPress={handleRegister}
-                disabled={isLoading}
+                disabled={isLoading || !acceptedTerms}
                 style={[
                   styles.registerButton,
                   {
-                    backgroundColor: theme.colors.primary,
-                    shadowColor: theme.colors.primary,
+                    backgroundColor: acceptedTerms ? theme.colors.primary : theme.colors.border,
+                    shadowColor: acceptedTerms ? theme.colors.primary : 'transparent',
+                    opacity: acceptedTerms ? 1 : 0.6,
                   }
                 ]}
                 textStyle={[
@@ -420,5 +484,43 @@ const styles = StyleSheet.create({
   footerLink: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  termsContainer: {
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  checkboxContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 2,
+    marginRight: 12,
+    marginTop: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  termsTextContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+  },
+  termsText: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  termsLink: {
+    fontSize: 14,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+  },
+  errorText: {
+    fontSize: 12,
+    marginTop: 4,
+    marginLeft: 32,
   },
 }); 

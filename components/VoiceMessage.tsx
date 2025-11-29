@@ -53,6 +53,8 @@ export const VoiceMessage: React.FC<VoiceMessageProps> = ({
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.8)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const isFinishedRef = useRef(false); // Track if audio has finished to prevent loops
+  const statusUpdateSubscriptionRef = useRef<Audio.Subscription | null>(null);
 
   useEffect(() => {
     if (animated) {
@@ -86,12 +88,19 @@ export const VoiceMessage: React.FC<VoiceMessageProps> = ({
     loadAudio();
     
     return () => {
+      // Reset finished flag
+      isFinishedRef.current = false;
+      
       if (sound) {
-        sound.unloadAsync();
+        // Stop playback before unloading
+        sound.stopAsync().catch(() => {});
+        sound.unloadAsync().catch(() => {});
       }
       if (htmlAudio) {
         htmlAudio.pause();
         htmlAudio.src = '';
+        // Remove all event listeners
+        htmlAudio.removeEventListener('ended', () => {});
       }
     };
   }, [audioUri]);
@@ -100,22 +109,59 @@ export const VoiceMessage: React.FC<VoiceMessageProps> = ({
   useEffect(() => {
     if (!sound) return;
 
+    // Clean up previous subscription if exists
+    if (statusUpdateSubscriptionRef.current) {
+      statusUpdateSubscriptionRef.current.remove();
+      statusUpdateSubscriptionRef.current = null;
+    }
+
+    // Reset finished flag when sound changes
+    isFinishedRef.current = false;
+
     const statusListener = sound.setOnPlaybackStatusUpdate((status) => {
       if (status.isLoaded) {
-        if (status.didJustFinish) {
+        if (status.didJustFinish && !isFinishedRef.current) {
+          // Mark as finished to prevent multiple callbacks
+          isFinishedRef.current = true;
+          console.log('🎵 Audio playback finished');
+          
+          // Stop playback and reset state
           setIsPlaying(false);
           setCurrentPosition(0);
-          sound.setPositionAsync(0);
-        } else if (status.positionMillis !== undefined) {
+          
+          // Pause the sound explicitly to prevent auto-replay
+          sound.pauseAsync().catch((error) => {
+            console.error('Error pausing sound after finish:', error);
+          });
+          
+          // Reset position after a small delay to avoid triggering replay
+          setTimeout(() => {
+            sound.setPositionAsync(0).catch((error) => {
+              console.error('Error resetting position:', error);
+            });
+          }, 100);
+          
+          // Call onPause callback if provided
+          onPause?.();
+        } else if (status.positionMillis !== undefined && !status.didJustFinish) {
+          // Only update position if not finished
           setCurrentPosition(status.positionMillis / 1000);
         }
       }
     });
 
+    // Store subscription reference for cleanup
+    statusUpdateSubscriptionRef.current = statusListener;
+
     return () => {
-      // No need to remove listener as it's automatically cleaned up
+      // Clean up subscription
+      if (statusUpdateSubscriptionRef.current) {
+        statusUpdateSubscriptionRef.current.remove();
+        statusUpdateSubscriptionRef.current = null;
+      }
+      isFinishedRef.current = false;
     };
-  }, [sound]);
+  }, [sound, onPause]);
 
   const loadAudio = async () => {
     if (!audioUri) {
@@ -172,8 +218,13 @@ export const VoiceMessage: React.FC<VoiceMessageProps> = ({
         
         audio.addEventListener('ended', () => {
           console.log('✅ HTML5 Audio playback ended');
+          if (!isFinishedRef.current) {
+            isFinishedRef.current = true;
           setIsPlaying(false);
           setCurrentPosition(0);
+            audio.currentTime = 0; // Reset position
+            onPause?.();
+          }
         });
         
         // Try to load audio explicitly
@@ -359,9 +410,17 @@ export const VoiceMessage: React.FC<VoiceMessageProps> = ({
           console.log('🎵 Playing expo-av audio');
           console.log('🎵 Audio URI:', audioUri?.substring(0, 50) + '...');
           
+          // Reset finished flag when starting playback
+          isFinishedRef.current = false;
+          
           // Get current status before playing
           const statusBefore = await sound.getStatusAsync();
           console.log('🎵 Status before play:', statusBefore);
+          
+          // If audio was finished, reset position first
+          if (statusBefore.isLoaded && statusBefore.didJustFinish) {
+            await sound.setPositionAsync(0);
+          }
           
           await sound.playAsync();
           setIsPlaying(true);

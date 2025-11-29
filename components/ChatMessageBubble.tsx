@@ -28,7 +28,7 @@ interface ChatMessageBubbleProps {
   isLegacyVoiceMessage?: boolean;
 }
 
-export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
+const ChatMessageBubbleComponent: React.FC<ChatMessageBubbleProps> = ({
   message,
   response,
   isUser,
@@ -44,8 +44,8 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
   const messageObj = typeof message === 'string' ? null : message;
   const { theme } = useTheme();
   
-  // Debug: Log message object structure
-  if (messageObj && !isUser) {
+  // Debug: Log message object structure (removed for performance)
+  if (false && messageObj && !isUser && __DEV__) {
     console.log('🔍 ChatMessageBubble - AI message object:', {
       id: messageObj.id,
       hasAudioResponseId: !!messageObj.audio_response_id,
@@ -222,21 +222,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
     }
   };
 
-  // Debug logging for message object
-  console.log('🔍 ChatMessageBubble debug:', {
-    messageType: typeof message,
-    messageObj: messageObj,
-    hasAudioId: messageObj?.audio_id,
-    hasAudioData: messageObj?.audio_data,
-    hasAudioResponseId: messageObj?.audio_response_id,
-    hasAudioResponseData: messageObj?.audio_response_data,
-    audioId: messageObj?.audio_id,
-    audioDataLength: messageObj?.audio_data?.length,
-    audioResponseId: messageObj?.audio_response_id,
-    audioResponseDataLength: messageObj?.audio_response_data?.length,
-    audioResponseDataType: typeof messageObj?.audio_response_data,
-    isUser
-  });
+  // Debug logging removed for performance - only log in extreme cases
 
   // Check if message has audio_response_id (AI audio response) - PRIORITY
   // Check both audio_response_id and audio_response_data (must be non-empty string)
@@ -525,4 +511,31 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 16,
   },
+});
+
+// Memoize component to prevent unnecessary re-renders
+export const ChatMessageBubble = React.memo(ChatMessageBubbleComponent, (prevProps, nextProps) => {
+  // Custom comparison function for better performance
+  if (typeof prevProps.message === 'object' && typeof nextProps.message === 'object') {
+    return (
+      prevProps.message?.id === nextProps.message?.id &&
+      prevProps.response === nextProps.response &&
+      prevProps.isUser === nextProps.isUser &&
+      prevProps.timestamp === nextProps.timestamp &&
+      prevProps.isTyping === nextProps.isTyping &&
+      prevProps.agentId === nextProps.agentId &&
+      prevProps.animated === nextProps.animated &&
+      prevProps.isLegacyVoiceMessage === nextProps.isLegacyVoiceMessage
+    );
+  }
+  return (
+    prevProps.message === nextProps.message &&
+    prevProps.response === nextProps.response &&
+    prevProps.isUser === nextProps.isUser &&
+    prevProps.timestamp === nextProps.timestamp &&
+    prevProps.isTyping === nextProps.isTyping &&
+    prevProps.agentId === nextProps.agentId &&
+    prevProps.animated === nextProps.animated &&
+    prevProps.isLegacyVoiceMessage === nextProps.isLegacyVoiceMessage
+  );
 });

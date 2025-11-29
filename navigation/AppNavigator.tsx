@@ -14,6 +14,8 @@ import ChatScreen from '../screens/ChatScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import UserProfileScreen from '../screens/UserProfileScreen';
+import PrivacyPolicyScreen from '../screens/PrivacyPolicyScreen';
+import TermsOfServiceScreen from '../screens/TermsOfServiceScreen';
 import { WelcomeScreen } from '../components/WelcomeScreen';
 
 const Stack = createStackNavigator();
@@ -130,12 +132,40 @@ const AppNavigator = () => {
                 },
               }}
             />
+            <Stack.Screen 
+              name="PrivacyPolicy" 
+              component={PrivacyPolicyScreen}
+              options={{
+                headerShown: false,
+              }}
+            />
+            <Stack.Screen 
+              name="TermsOfService" 
+              component={TermsOfServiceScreen}
+              options={{
+                headerShown: false,
+              }}
+            />
           </>
         ) : (
           <>
             <Stack.Screen name="Welcome" component={WelcomeScreen} />
             <Stack.Screen name="Login" component={LoginScreen} />
             <Stack.Screen name="Register" component={RegisterScreen} />
+            <Stack.Screen 
+              name="PrivacyPolicy" 
+              component={PrivacyPolicyScreen}
+              options={{
+                headerShown: false,
+              }}
+            />
+            <Stack.Screen 
+              name="TermsOfService" 
+              component={TermsOfServiceScreen}
+              options={{
+                headerShown: false,
+              }}
+            />
           </>
         )}
       </Stack.Navigator>

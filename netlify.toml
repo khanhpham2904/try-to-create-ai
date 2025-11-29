@@ -6,8 +6,8 @@
   publish = "web-build"
 
 [build.environment]
-  # Node version
-  NODE_VERSION = "18.x"
+  # Node version - Netlify will use .nvmrc if available, or specify exact version here
+  # NODE_VERSION = "18.20.0"  # Uncomment and specify exact version if needed
   
   # Build environment
   NODE_ENV = "production"

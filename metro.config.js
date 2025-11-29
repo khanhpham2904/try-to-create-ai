@@ -11,7 +11,9 @@ config.resolver.resolverMainFields = ['react-native', 'browser', 'main'];
 // Add support for TypeScript files
 config.resolver.sourceExts = [...config.resolver.sourceExts, 'ts', 'tsx'];
 
-// Exclude FFmpeg worker files from bundling
+// Exclude FFmpeg worker files from bundling (if needed)
+// Platform-specific files (audioConverter.web.ts / audioConverter.native.ts) 
+// handle FFmpeg imports automatically
 config.resolver.blockList = [
   /node_modules\/@ffmpeg\/ffmpeg\/dist\/esm\/worker\.js$/,
   /node_modules\/@ffmpeg\/ffmpeg\/dist\/umd\/worker\.js$/,

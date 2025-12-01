@@ -38,16 +38,16 @@ export const useSpeechToText = (languageCode: string = 'en-US'): SpeechToTextHoo
       // For mobile, we'll try to load the Voice module
       try {
         const Voice = require('@react-native-voice/voice').default;
-        if (Voice) {
+        if (Voice && typeof Voice.start === 'function') {
           setIsAvailable(true);
-          console.log(' React Native Voice module is available');
+          console.log('✅ React Native Voice module is available');
         } else {
           setIsAvailable(false);
-          console.log(' React Native Voice module not available');
+          console.log('❌ React Native Voice module not available - methods missing');
         }
       } catch (e) {
         setIsAvailable(false);
-        console.log(' React Native Voice module not available (likely Expo Go)');
+        console.log('❌ React Native Voice module not available (likely Expo Go):', (e as Error).message);
       }
     }
   }, []);
@@ -115,44 +115,72 @@ export const useSpeechToText = (languageCode: string = 'en-US'): SpeechToTextHoo
     } else {
       // For mobile, try React Native Voice
       try {
-        const Voice = require('@react-native-voice/voice').default;
+        let Voice;
+        try {
+          Voice = require('@react-native-voice/voice').default;
+        } catch (requireError) {
+          throw new Error('Voice module cannot be loaded - this usually means you need to build a standalone app instead of using Expo Go');
+        }
         
         if (!Voice) {
           throw new Error('Voice module not available - this usually means you need to build a standalone app instead of using Expo Go');
         }
 
+        // Additional check: verify Voice.start is a function
+        if (typeof Voice.start !== 'function') {
+          throw new Error('Voice.start method is not available - Voice module may not be properly initialized');
+        }
+
         setError(null);
         setRecognizedText('');
         
-        // Set up event handlers
-        Voice.onSpeechStart = () => {
-          console.log(' Mobile speech started with language:', languageCode);
-          setIsListening(true);
-          setError(null);
-        };
+        // Set up event handlers with null checks
+        if (Voice.onSpeechStart !== undefined) {
+          Voice.onSpeechStart = () => {
+            console.log(' Mobile speech started with language:', languageCode);
+            setIsListening(true);
+            setError(null);
+          };
+        }
 
-        Voice.onSpeechResults = (e: any) => {
-          console.log(' Mobile speech results:', e.value);
-          if (e.value && e.value.length > 0) {
-            setRecognizedText(e.value[0]);
+        if (Voice.onSpeechResults !== undefined) {
+          Voice.onSpeechResults = (e: any) => {
+            console.log(' Mobile speech results:', e.value);
+            if (e.value && e.value.length > 0) {
+              setRecognizedText(e.value[0]);
+            }
+            setIsListening(false);
+          };
+        }
+
+        if (Voice.onSpeechError !== undefined) {
+          Voice.onSpeechError = (e: any) => {
+            console.error(' Mobile speech error:', e.error);
+            setError(e.error?.message || 'Speech recognition error');
+            setIsListening(false);
+          };
+        }
+
+        if (Voice.onSpeechEnd !== undefined) {
+          Voice.onSpeechEnd = () => {
+            console.log(' Mobile speech ended');
+            setIsListening(false);
+          };
+        }
+
+        // Call Voice.start with error handling
+        try {
+          await Voice.start(languageCode); // Use the provided language code
+          console.log(' Started mobile speech recognition with language:', languageCode);
+          setIsAvailable(true);
+        } catch (startError: any) {
+          // Handle specific error when Voice.start fails
+          const startErrorMessage = startError instanceof Error ? startError.message : String(startError);
+          if (startErrorMessage.includes('startSpeech') || startErrorMessage.includes('null')) {
+            throw new Error('Voice module is not properly initialized. Please build a standalone app instead of using Expo Go.');
           }
-          setIsListening(false);
-        };
-
-        Voice.onSpeechError = (e: any) => {
-          console.error(' Mobile speech error:', e.error);
-          setError(e.error?.message || 'Speech recognition error');
-          setIsListening(false);
-        };
-
-        Voice.onSpeechEnd = () => {
-          console.log(' Mobile speech ended');
-          setIsListening(false);
-        };
-
-        await Voice.start(languageCode); // Use the provided language code
-        console.log(' Started mobile speech recognition with language:', languageCode);
-        setIsAvailable(true);
+          throw startError; // Re-throw other errors
+        }
         
       } catch (err) {
         console.error(' Mobile speech recognition error:', err);
@@ -178,13 +206,26 @@ export const useSpeechToText = (languageCode: string = 'en-US'): SpeechToTextHoo
     } else {
       // For mobile
       try {
-        const Voice = require('@react-native-voice/voice').default;
+        let Voice;
+        try {
+          Voice = require('@react-native-voice/voice').default;
+        } catch (requireError) {
+          console.error('❌ Error loading Voice module in stopListening:', requireError);
+          setIsListening(false);
+          return;
+        }
+        
         if (Voice && typeof Voice.stop === 'function') {
           await Voice.stop();
-          console.log(' Stopped mobile speech recognition');
+          console.log('✅ Stopped mobile speech recognition');
+          setIsListening(false);
+        } else {
+          console.warn('⚠️ Voice.stop is not available');
+          setIsListening(false);
         }
       } catch (err) {
-        console.error(' Error stopping mobile speech recognition:', err);
+        console.error('❌ Error stopping mobile speech recognition:', err);
+        setIsListening(false);
       }
     }
   }, []);

@@ -48,6 +48,7 @@ import { InlineVoiceRecorder } from '../components/InlineVoiceRecorder';
 import { VoiceMessage } from '../components/VoiceMessage';
 import { VoiceGenderSelector } from '../components/VoiceGenderSelector';
 import NewbieGuideModal from '../components/NewbieGuideModal';
+import { ImageGenerationPopup } from '../components/ImageGenerationPopup';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface ChatScreenProps {
@@ -110,6 +111,10 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
   
   // Newbie guide modal state
   const [showNewbieGuide, setShowNewbieGuide] = useState(false);
+  
+  // Image generation popup state
+  const [showImageGenerationPopup, setShowImageGenerationPopup] = useState(false);
+  const [imageGenerationPrompt, setImageGenerationPrompt] = useState<string>('');
   const [hasCheckedGuideStatus, setHasCheckedGuideStatus] = useState(false);
   
   // Voice chat mode state (removed - now using inline voice recording)
@@ -2241,6 +2246,17 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
     try {
       console.log('📄 Sending document with message:', messageText, 'File:', fileName);
       
+      // Validate that prompt is required for document
+      if (!messageText || !messageText.trim()) {
+        Alert.alert(
+          language === 'vi' ? 'Yêu cầu nhập prompt' : 'Prompt Required',
+          language === 'vi' 
+            ? 'Vui lòng nhập prompt để mô tả những gì bạn muốn AI làm với tài liệu này.'
+            : 'Please enter a prompt to describe what you want AI to do with this document.'
+        );
+        return;
+      }
+      
       setIsSending(true);
       
       let content: string = '';
@@ -2479,6 +2495,12 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
             agentId={selectedAgent?.id}
             animated={!attachmentOptionsVisible}
             isLegacyVoiceMessage={false}
+            // Image generation callback - COMMENTED OUT
+            // onGenerateImageFromMessage={(prompt) => {
+            //   // Open image generation popup with this message as initial prompt
+            //   setImageGenerationPrompt(prompt);
+            //   setShowImageGenerationPopup(true);
+            // }}
           />
         )}
         {/* AI Response - only render if response exists */}
@@ -2491,6 +2513,11 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
             agentId={selectedAgent?.id}
             animated={!attachmentOptionsVisible}
             isLegacyVoiceMessage={false}
+            onGenerateImageFromMessage={(prompt) => {
+              // Open image generation popup with AI response as initial prompt
+              setImageGenerationPrompt(prompt);
+              setShowImageGenerationPopup(true);
+            }}
           />
         )}
       </React.Fragment>
@@ -3659,18 +3686,31 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
             
             <Text style={[styles.modalMessage, { color: theme.colors.textSecondary }]}>
               {language === 'vi' 
-                ? `Nhập tin nhắn để gửi cùng với ${selectedFileType === 'image' ? 'ảnh' : 'tài liệu'}:`
-                : `Enter a message to send with the ${selectedFileType}:`
+                ? selectedFileType === 'document'
+                  ? 'Nhập prompt (bắt buộc) để mô tả những gì bạn muốn AI làm với tài liệu:'
+                  : `Nhập tin nhắn để gửi cùng với ảnh:`
+                : selectedFileType === 'document'
+                  ? 'Enter prompt (required) to describe what you want AI to do with the document:'
+                  : `Enter a message to send with the image:`
               }
             </Text>
             
             <TextInput
-              style={[styles.imageMessageInput, { 
-                backgroundColor: theme.colors.background,
-                color: theme.colors.text,
-                borderColor: theme.colors.border
-              }]}
-              placeholder={language === 'vi' ? 'Nhập tin nhắn...' : 'Type your message...'}
+              style={[
+                styles.imageMessageInput, 
+                { 
+                  backgroundColor: theme.colors.background,
+                  color: theme.colors.text,
+                  borderColor: selectedFileType === 'document' && !inputMessage.trim() 
+                    ? (theme.colors.error || '#ff0000') 
+                    : theme.colors.border
+                }
+              ]}
+              placeholder={
+                selectedFileType === 'document'
+                  ? (language === 'vi' ? 'Nhập prompt (bắt buộc)...' : 'Enter prompt (required)...')
+                  : (language === 'vi' ? 'Nhập tin nhắn...' : 'Type your message...')
+              }
               placeholderTextColor={theme.colors.textSecondary}
               multiline={true}
               numberOfLines={3}
@@ -3694,15 +3734,32 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.modalButton, styles.modalPrimaryButton, { backgroundColor: theme.colors.primary }]}
+                style={[
+                  styles.modalButton, 
+                  styles.modalPrimaryButton, 
+                  { 
+                    backgroundColor: theme.colors.primary,
+                    opacity: (selectedFileType === 'document' && !inputMessage.trim()) ? 0.5 : 1
+                  }
+                ]}
                 onPress={() => {
                   if (selectedFileType === 'image' && selectedImage) {
                     sendImageWithMessage(selectedImage, inputMessage);
                   } else if (selectedFileType === 'document' && selectedDocument) {
+                    // Validate that prompt is required for document
+                    if (!inputMessage.trim()) {
+                      Alert.alert(
+                        language === 'vi' ? 'Yêu cầu nhập prompt' : 'Prompt Required',
+                        language === 'vi' 
+                          ? 'Vui lòng nhập prompt để mô tả những gì bạn muốn AI làm với tài liệu này.'
+                          : 'Please enter a prompt to describe what you want AI to do with this document.'
+                      );
+                      return;
+                    }
                     sendDocumentWithMessage(selectedDocument, inputMessage, selectedFileName);
                   }
                 }}
-                disabled={isSending}
+                disabled={isSending || (selectedFileType === 'document' && !inputMessage.trim())}
               >
                 <Text style={[styles.modalButtonText, { color: theme.colors.surface }]}>
                   {isSending 
@@ -3930,6 +3987,37 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
                   </View>
                   <Icon name="chevron-right" size={16} color={theme.colors.textSecondary} />
                 </TouchableOpacity>
+
+                {/* Generate Image option - COMMENTED OUT */}
+                {/* <TouchableOpacity
+                  style={[styles.miniTableOption, { borderColor: theme.colors.border }]}
+                  onPress={() => {
+                    console.log('🎨 Generate Image option pressed');
+                    // Animate slide down
+                    Animated.timing(slideAnim, {
+                      toValue: 300,
+                      duration: 200,
+                      useNativeDriver: true,
+                    }).start(() => {
+                      setAttachmentOptionsVisible(false);
+                      setShowImageGenerationPopup(true);
+                    });
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.optionIcon, { backgroundColor: '#8B5CF6' + '15' }]}>
+                    <Icon name="auto-awesome" size={20} color="#8B5CF6" />
+                  </View>
+                  <View style={styles.optionContent}>
+                    <Text style={[styles.optionTitle, { color: theme.colors.text }]}>
+                      {language === 'vi' ? 'Tạo ảnh AI' : 'Generate Image'}
+                    </Text>
+                    <Text style={[styles.optionSubtitle, { color: theme.colors.textSecondary }]}>
+                      {language === 'vi' ? 'Tạo ảnh bằng AI' : 'Create image with AI'}
+                    </Text>
+                  </View>
+                  <Icon name="chevron-right" size={16} color={theme.colors.textSecondary} />
+                </TouchableOpacity> */}
               </View>
             </View>
           </Animated.View>
@@ -3963,6 +4051,71 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route }: any) => {
         }
       }}
     />
+
+    {/* Image Generation Popup - COMMENTED OUT */}
+    {/* {user && (
+      <ImageGenerationPopup
+        visible={showImageGenerationPopup}
+        onClose={() => setShowImageGenerationPopup(false)}
+        userId={Number((user as any).id)}
+        initialPrompt={imageGenerationPrompt}
+        onImageGenerated={async (imageUrl, prompt) => {
+          // Automatically add the generated image as a message to chat
+          console.log('Image generated:', imageUrl, 'Prompt:', prompt);
+          
+          try {
+            // Format message with [IMAGE:url] so frontend can parse and display it
+            const imageMessage = `[IMAGE:${imageUrl}] 🎨 I've generated an image for you!\n\n**Prompt:** ${prompt}\n\nYou can view the generated image above.`;
+            
+            // Create temporary message to display immediately
+            const tempMessage: ChatMessage = {
+              id: Date.now(), // Temporary ID
+              message: `Generate image: ${prompt}`,
+              response: imageMessage,
+              user_id: Number((user as any).id),
+              agent_id: selectedAgent?.id,
+              chatbox_id: selectedChatbox?.id,
+              created_at: new Date().toISOString(),
+            };
+            
+            // Add message to chat immediately
+            setMessages(prev => {
+              const safePrev = Array.isArray(prev) ? prev : [];
+              // Remove typing indicator if exists
+              const filtered = safePrev.filter(msg => !msg.isTyping);
+              return [...filtered, tempMessage];
+            });
+            
+            // Optionally save to DB by sending a message (backend will handle it)
+            // This will create a proper DB entry with the image response
+            try {
+              if (user && selectedAgent) {
+                await apiService.sendMessageExternalAPI(
+                  Number((user as any).id),
+                  `Generate image: ${prompt}`,
+                  undefined,
+                  selectedAgent.id
+                );
+              } else if (user) {
+                await apiService.sendMessage(
+                  Number((user as any).id),
+                  `Generate image: ${prompt}`,
+                  undefined,
+                  undefined
+                );
+              }
+            } catch (dbError) {
+              console.warn('Could not save image message to DB:', dbError);
+              // Message is still displayed in UI, just not saved to DB
+            }
+          } catch (error) {
+            console.error('Error adding image message to chat:', error);
+          }
+          
+          setShowImageGenerationPopup(false);
+        }}
+      />
+    )} */}
     </>
   );
 };

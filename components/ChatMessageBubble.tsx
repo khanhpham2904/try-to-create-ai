@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,7 @@ import { useTheme } from '../theme/ThemeContext';
 import { AudioMessageBubble } from './AudioMessageBubble';
 import { VoiceMessage } from './VoiceMessage';
 import { ChatMessage } from '../services/api';
+import { ImageDetailModal } from './ImageDetailModal';
 
 interface ChatMessageBubbleProps {
   message: ChatMessage | string; // Support both ChatMessage object and string for backward compatibility
@@ -26,6 +27,7 @@ interface ChatMessageBubbleProps {
   onPress?: () => void;
   animated?: boolean;
   isLegacyVoiceMessage?: boolean;
+  onGenerateImageFromMessage?: (prompt: string) => void;
 }
 
 const ChatMessageBubbleComponent: React.FC<ChatMessageBubbleProps> = ({
@@ -38,11 +40,17 @@ const ChatMessageBubbleComponent: React.FC<ChatMessageBubbleProps> = ({
   onPress,
   animated = true,
   isLegacyVoiceMessage = false,
+  onGenerateImageFromMessage,
 }) => {
   // Handle both string and ChatMessage object
   const messageText = typeof message === 'string' ? message : (isUser ? message.message : message.response);
   const messageObj = typeof message === 'string' ? null : message;
   const { theme } = useTheme();
+  
+  // State for image detail modal
+  const [imageDetailVisible, setImageDetailVisible] = useState(false);
+  const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
+  const [selectedImageIsUrl, setSelectedImageIsUrl] = useState(true);
   
   // Debug: Log message object structure (removed for performance)
   if (false && messageObj && !isUser && __DEV__) {
@@ -61,7 +69,8 @@ const ChatMessageBubbleComponent: React.FC<ChatMessageBubbleProps> = ({
   }
   const slideAnim = useRef(new Animated.Value(isUser ? 50 : -50)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const scaleAnim = useRef(new Animated.Value(0.8)).current;
+  // Removed scaleAnim to prevent text blur
+  // const scaleAnim = useRef(new Animated.Value(0.8)).current;
 
   useEffect(() => {
     if (animated) {
@@ -76,19 +85,13 @@ const ChatMessageBubbleComponent: React.FC<ChatMessageBubbleProps> = ({
           duration: 300,
           useNativeDriver: true,
         }),
-        Animated.spring(scaleAnim, {
-          toValue: 1,
-          tension: 100,
-          friction: 8,
-          useNativeDriver: true,
-        }),
+        // Removed scale animation to prevent text blur
       ]).start();
     } else {
       slideAnim.setValue(0);
       fadeAnim.setValue(1);
-      scaleAnim.setValue(1);
     }
-  }, [animated, slideAnim, fadeAnim, scaleAnim]);
+  }, [animated, slideAnim, fadeAnim]);
 
   const getBubbleStyle = (): any => {
     const baseStyle = {
@@ -172,17 +175,69 @@ const ChatMessageBubbleComponent: React.FC<ChatMessageBubbleProps> = ({
   };
 
   const extractImageAndText = (text: string) => {
+    if (!text) {
+      return { hasImage: false, imageData: null, messageText: text, hasDocument: false, documentData: null };
+    }
+    
+    // Check for [IMAGE:url] format
     if (isImageMessage(text)) {
-      const imageMatch = text.match(/^\[IMAGE:([^\]]+)\]\s*(.*)$/);
+      // More robust regex: match [IMAGE:...] and extract URL (stop at first ])
+      // Use non-greedy match to stop at first ]
+      const imageMatch = text.match(/^\[IMAGE:([^\]]+?)\]\s*(.*)$/s);
       if (imageMatch) {
+        // Extract and clean the image URL/data
+        let imageData = imageMatch[1].trim();
+        // Remove any trailing ] that might have been included (safety check)
+        imageData = imageData.replace(/\]+$/, '');
+        // Remove any URL encoding artifacts (try-catch for invalid encoding)
+        try {
+          // Only decode if it contains encoded characters
+          if (imageData.includes('%')) {
+            imageData = decodeURIComponent(imageData);
+          }
+        } catch (e) {
+          // If decode fails, use original
+          console.warn('Failed to decode image URL:', e);
+        }
+        
+        // Log for debugging
+        console.log('Extracted image data:', imageData.substring(0, 100));
+        
+        // Check if imageData is a URL (starts with http) or base64 data
+        const isUrl = imageData.startsWith('http://') || imageData.startsWith('https://') || imageData.startsWith('/');
         return {
           hasImage: true,
-          imageData: imageMatch[1],
+          imageData: imageData,
+          imageIsUrl: isUrl, // Flag to indicate if it's a URL or base64
           messageText: imageMatch[2].trim(),
           hasDocument: false,
           documentData: null
         };
       }
+    }
+    
+    // Fallback: Check if text contains image URL pattern (for backward compatibility)
+    // Pattern: /uploads/generated_images/... or http://.../uploads/generated_images/...
+    const imageUrlPattern = /(?:https?:\/\/[^\s]+)?\/uploads\/generated_images\/[^\s\)]+/i;
+    const urlMatch = text.match(imageUrlPattern);
+    if (urlMatch) {
+      let imageUrl = urlMatch[0];
+      // If URL doesn't start with http, prepend base URL from config
+      if (imageUrl.startsWith('/')) {
+        const { API_CONFIG } = require('../constants/config');
+        const baseUrl = API_CONFIG.BASE_URL || 'http://localhost:8000';
+        imageUrl = `${baseUrl}${imageUrl}`;
+      }
+      // Remove the URL from text
+      const messageText = text.replace(imageUrlPattern, '').trim();
+      return {
+        hasImage: true,
+        imageData: imageUrl,
+        imageIsUrl: true,
+        messageText: messageText,
+        hasDocument: false,
+        documentData: null
+      };
     }
     
     if (isDocumentMessage(text)) {
@@ -220,6 +275,17 @@ const ChatMessageBubbleComponent: React.FC<ChatMessageBubbleProps> = ({
     } else if (onPress) {
       onPress();
     }
+  };
+
+  const handleImagePress = (imageData: string, imageIsUrl: boolean) => {
+    setSelectedImageUri(imageData);
+    setSelectedImageIsUrl(imageIsUrl);
+    setImageDetailVisible(true);
+  };
+
+  const handleCloseImageDetail = () => {
+    setImageDetailVisible(false);
+    setSelectedImageUri(null);
   };
 
   // Debug logging removed for performance - only log in extreme cases
@@ -341,7 +407,8 @@ const ChatMessageBubbleComponent: React.FC<ChatMessageBubbleProps> = ({
         opacity: fadeAnim,
         transform: [
           { translateX: slideAnim },
-          { scale: scaleAnim },
+          // Remove scale transform to prevent text blur
+          // { scale: scaleAnim },
         ],
       }}
     >
@@ -362,35 +429,98 @@ const ChatMessageBubbleComponent: React.FC<ChatMessageBubbleProps> = ({
         ) : (
           <>
             {!isUser && agentId && (
-              <Text style={[styles.agentLabel, { color: theme.colors.primary, fontSize: 12 }]}>
+              <Text 
+                style={[styles.agentLabel, { color: theme.colors.primary, fontSize: 12 }]}
+                allowFontScaling={false}
+              >
                 Agent #{agentId}
               </Text>
             )}
             
             {(() => {
-              const { hasImage, imageData, messageText: extractedText, hasDocument, documentData } = extractImageAndText(messageText);
+              const { hasImage, imageData, imageIsUrl, messageText: extractedText, hasDocument, documentData } = extractImageAndText(messageText);
               
               return (
                 <>
                   {hasImage && imageData && (
-                    <View style={styles.imageContainer}>
-                      <Image
-                        source={{ uri: `data:image/jpeg;base64,${imageData}` }}
-                        style={styles.messageImage}
-                        resizeMode="contain"
-                      />
-                    </View>
+                    <TouchableOpacity
+                      style={styles.imageContainer}
+                      onPress={() => handleImagePress(imageData, imageIsUrl)}
+                      activeOpacity={0.8}
+                    >
+                      {Platform.OS === 'web' ? (
+                        // Use HTML img tag for web platform (better compatibility)
+                        <img
+                          src={imageIsUrl ? imageData : `data:image/jpeg;base64,${imageData}`}
+                          alt="Generated image"
+                          style={{
+                            maxWidth: '100%',
+                            height: 'auto',
+                            objectFit: 'contain',
+                            borderRadius: 8,
+                            cursor: 'pointer',
+                          }}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleImagePress(imageData, imageIsUrl);
+                          }}
+                          onError={(e) => {
+                            console.error('Image load error (web):', e);
+                            console.error('Image URL:', imageData);
+                            // Try to open in new tab as fallback
+                            if (imageIsUrl) {
+                              console.log('Attempting to open image in new tab as fallback');
+                              window.open(imageData, '_blank');
+                            }
+                          }}
+                          onLoad={() => {
+                            console.log('Image loaded successfully (web):', imageData);
+                          }}
+                        />
+                      ) : (
+                        // Use React Native Image for mobile platforms
+                        <Image
+                          source={imageIsUrl 
+                            ? { uri: imageData } // URL image
+                            : { uri: `data:image/jpeg;base64,${imageData}` } // Base64 image
+                          }
+                          style={styles.messageImage}
+                          resizeMode="contain"
+                          onError={(error) => {
+                            console.error('Image load error:', error.nativeEvent?.error || error);
+                            console.error('Image URL:', imageData);
+                          }}
+                          onLoad={() => {
+                            console.log('Image loaded successfully:', imageData);
+                          }}
+                          onLoadStart={() => {
+                            console.log('Image loading started:', imageData);
+                          }}
+                        />
+                      )}
+                      {/* Overlay icon to indicate image is clickable */}
+                      <View style={styles.imageOverlay}>
+                        <Icon name="zoom-in" size={24} color="#fff" />
+                      </View>
+                    </TouchableOpacity>
                   )}
                   
                   {hasDocument && documentData && (
                     <View style={[styles.documentContainer, { backgroundColor: theme.colors.background, borderColor: theme.colors.border }]}>
                       <View style={styles.documentHeader}>
                         <Icon name="description" size={20} color={theme.colors.primary} />
-                        <Text style={[styles.documentFilename, { color: theme.colors.text }]}>
+                        <Text 
+                          style={[styles.documentFilename, { color: theme.colors.text }]}
+                          allowFontScaling={false}
+                        >
                           {documentData.filename}
                         </Text>
                       </View>
-                      <Text style={[styles.documentPreview, { color: theme.colors.textSecondary }]}>
+                      <Text 
+                        style={[styles.documentPreview, { color: theme.colors.textSecondary }]}
+                        allowFontScaling={false}
+                      >
                         {documentData.preview}
                       </Text>
                     </View>
@@ -400,7 +530,10 @@ const ChatMessageBubbleComponent: React.FC<ChatMessageBubbleProps> = ({
                     <>
                       {isLink(extractedText) ? (
                         <TouchableOpacity onPress={() => handlePress(extractedText)}>
-                          <Text style={[styles.messageText, { color: isUser ? 'white' : theme.colors.info, textDecorationLine: 'underline' }]}>
+                          <Text 
+                            style={[styles.messageText, { color: isUser ? 'white' : theme.colors.info, textDecorationLine: 'underline' }]}
+                            allowFontScaling={false}
+                          >
                             {extractedText}
                           </Text>
                           <View style={styles.linkIcon}>
@@ -408,10 +541,39 @@ const ChatMessageBubbleComponent: React.FC<ChatMessageBubbleProps> = ({
                           </View>
                         </TouchableOpacity>
                       ) : (
-                        <Text style={[styles.messageText, { color: getTextColor() }]}>
+                        <Text 
+                          style={[styles.messageText, { color: getTextColor() }]}
+                          allowFontScaling={false}
+                        >
                           {extractedText}
                         </Text>
                       )}
+
+                      {/* Image generation quick action - COMMENTED OUT */}
+                      {/* {onGenerateImageFromMessage && !isTyping && (
+                        <View style={styles.actionRow}>
+                          <TouchableOpacity
+                            style={styles.actionButton}
+                            onPress={() => onGenerateImageFromMessage(extractedText)}
+                            activeOpacity={0.8}
+                          >
+                            <Icon
+                              name="auto-awesome"
+                              size={14}
+                              color={isUser ? '#FDE68A' : theme.colors.primary}
+                            />
+                            <Text
+                              style={[
+                                styles.actionButtonText,
+                                { color: isUser ? '#FDE68A' : theme.colors.primary },
+                              ]}
+                              allowFontScaling={false}
+                            >
+                              {isUser ? 'Generate Image' : 'Use as Image Prompt'}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      )} */}
                     </>
                   )}
                 </>
@@ -419,7 +581,10 @@ const ChatMessageBubbleComponent: React.FC<ChatMessageBubbleProps> = ({
             })()}
             
             {timestamp && (
-              <Text style={[styles.timestamp, { color: isUser ? 'rgba(255,255,255,0.7)' : theme.colors.textTertiary }]}>
+              <Text 
+                style={[styles.timestamp, { color: isUser ? 'rgba(255,255,255,0.7)' : theme.colors.textTertiary }]}
+                allowFontScaling={false}
+              >
                 {formatTime(timestamp)}
               </Text>
             )}
@@ -430,15 +595,26 @@ const ChatMessageBubbleComponent: React.FC<ChatMessageBubbleProps> = ({
     </Animated.View>
   );
 
-  if (onPress && !isLink(messageText)) {
-    return (
-      <TouchableOpacity onPress={onPress} activeOpacity={0.9}>
+  return (
+    <>
+      {onPress && !isLink(messageText) ? (
+        <TouchableOpacity onPress={onPress} activeOpacity={0.9}>
+          <Bubble />
+        </TouchableOpacity>
+      ) : (
         <Bubble />
-      </TouchableOpacity>
-    );
-  }
-
-  return <Bubble />;
+      )}
+      
+      {/* Image Detail Modal */}
+      <ImageDetailModal
+        visible={imageDetailVisible}
+        imageUri={selectedImageUri}
+        imageIsUrl={selectedImageIsUrl}
+        onClose={handleCloseImageDetail}
+        title="Image Detail"
+      />
+    </>
+  );
 };
 
 const styles = StyleSheet.create({
@@ -455,6 +631,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 22,
     fontWeight: '400',
+    // Prevent text blur on Android/iOS
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
   timestamp: {
     fontSize: 12,
@@ -482,12 +661,29 @@ const styles = StyleSheet.create({
   imageContainer: {
     marginVertical: 8,
     alignItems: 'center',
+    position: 'relative',
   },
   messageImage: {
     width: 200,
     height: 200,
     borderRadius: 8,
     backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  imageOverlay: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 20,
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
   },
   documentContainer: {
     marginVertical: 8,
@@ -511,6 +707,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 16,
   },
+  actionRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 8,
+  },
+  actionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  actionButtonText: {
+    fontSize: 11,
+    fontWeight: '600',
+    marginLeft: 4,
+  },
 });
 
 // Memoize component to prevent unnecessary re-renders
@@ -525,7 +739,8 @@ export const ChatMessageBubble = React.memo(ChatMessageBubbleComponent, (prevPro
       prevProps.isTyping === nextProps.isTyping &&
       prevProps.agentId === nextProps.agentId &&
       prevProps.animated === nextProps.animated &&
-      prevProps.isLegacyVoiceMessage === nextProps.isLegacyVoiceMessage
+      prevProps.isLegacyVoiceMessage === nextProps.isLegacyVoiceMessage &&
+      prevProps.onGenerateImageFromMessage === nextProps.onGenerateImageFromMessage
     );
   }
   return (
@@ -536,6 +751,7 @@ export const ChatMessageBubble = React.memo(ChatMessageBubbleComponent, (prevPro
     prevProps.isTyping === nextProps.isTyping &&
     prevProps.agentId === nextProps.agentId &&
     prevProps.animated === nextProps.animated &&
-    prevProps.isLegacyVoiceMessage === nextProps.isLegacyVoiceMessage
+    prevProps.isLegacyVoiceMessage === nextProps.isLegacyVoiceMessage &&
+    prevProps.onGenerateImageFromMessage === nextProps.onGenerateImageFromMessage
   );
 });

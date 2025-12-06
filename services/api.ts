@@ -163,6 +163,22 @@ export interface ConversationSummary {
   latest_response: string;
 }
 
+export interface ImageGenerationRequest {
+  user_id: number;
+  prompt: string;
+  model?: string;
+}
+
+export interface ImageGenerationResponse {
+  success: boolean;
+  file_path?: string;
+  file_name?: string;
+  file_url?: string;
+  model?: string;
+  prompt?: string;
+  error?: string;
+}
+
 // ============================================================================
 // MOCK DATA
 // ============================================================================
@@ -829,6 +845,35 @@ class ApiService {
       method: 'POST',
       body: JSON.stringify(credentials),
     });
+  }
+
+  // ============================================================================
+  // IMAGE GENERATION METHODS
+  // ============================================================================
+
+  async generateImage(
+    userId: number,
+    prompt: string,
+    model?: string
+  ): Promise<ApiResponse<ImageGenerationResponse>> {
+    console.log('🎨 Generating image for user:', userId, 'with prompt:', prompt.substring(0, 50) + '...');
+    
+    // Use extended timeout for image generation (2 minutes)
+    const imageGenerationTimeout = 120000; // 2 minutes
+    
+    return this.makeRequestWithCustomTimeout<ImageGenerationResponse>('/api/v1/images/generate', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: userId,
+        prompt: prompt,
+        ...(model && { model })
+      }),
+    }, imageGenerationTimeout);
+  }
+
+  async checkImageServiceHealth(): Promise<ApiResponse<{ status: string; service: string; available: boolean; error?: string }>> {
+    console.log('🔍 Checking image service health...');
+    return this.makeRequest<{ status: string; service: string; available: boolean; error?: string }>('/api/v1/images/health');
   }
 
   // ============================================================================
